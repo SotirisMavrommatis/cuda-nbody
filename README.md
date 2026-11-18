@@ -36,7 +36,8 @@ galaxy   count=6144  x=-2.5 y=-0.8  vx=0.25  spin=1
 cluster  count=2048  x=3    y=1     vx=-0.45 mass=0.6 radius=0.25
 ```
 
-On Windows, **drag a scenario file onto `simulate.bat`** and the GIF appears in `output/`.
+On Windows, **drag a scenario file onto `simulate.bat`**. It runs the simulation, writes
+`output/<name>.frames` for the viewer and `output/<name>.gif`, and opens the viewer for you.
 The full list of settings is in [`scenarios/README.md`](scenarios/README.md).
 
 | Galaxy vs. star cluster | Two clusters merging | Tilted galaxies (3D) |
@@ -46,6 +47,19 @@ The full list of settings is in [`scenarios/README.md`](scenarios/README.md).
 
 There is also `black_hole_flyby.txt`, in which a black hole twice as heavy as the galaxy's
 centre flies past and tears out long tidal arms.
+
+## Watch it interactively
+
+Open **`viewer.html`** in any browser. It needs no installation and works offline. Drop in a
+`.frames` file from the `output` folder and you get:
+
+- **Play / pause, rewind, step frame by frame**, and a timeline slider to jump to any moment
+- **Playback speed** from 0.1× slow motion to 4×, including reverse
+- **3D view**: drag to rotate the camera, so tilted galaxies can be seen from the side
+- **Zoom and pan** with the mouse wheel and drag, plus optional **trails** behind moving bodies
+- Keyboard shortcuts: `Space` play/pause, `←`/`→` step, `Home`/`End`, `+`/`−` speed
+
+![The interactive viewer: a black hole tearing a galaxy apart](docs/viewer.png)
 
 ## Results
 
@@ -91,14 +105,16 @@ Rendering the GIF needs Python with `numpy`, `matplotlib` and `pillow`.
 - `run_all.bat`: runs every scenario and makes a GIF for each
 - `benchmark.bat`: CPU vs GPU verification plus the benchmark table above
 
-Everything is written to the `output/` folder, including a log file for each run.
+Everything is written to the `output/` folder: a `.frames` file for `viewer.html`, a GIF,
+a still PNG and a log file for each run.
 
 **By hand:**
 ```bash
 nvcc -O3 -o nbody nbody.cu
 ./nbody bench                                     # verify + benchmark
-./nbody scenarios/galaxies.txt frames.bin         # run a scenario
-python render.py frames.bin galaxies.gif galaxies # make the GIF
+./nbody scenarios/galaxies.txt galaxies.frames      # run a scenario
+python render.py galaxies.frames galaxies.gif galaxies  # make a GIF (optional)
+# ...or open viewer.html in a browser and drop galaxies.frames into it
 ```
 
 ## Files
@@ -106,7 +122,8 @@ python render.py frames.bin galaxies.gif galaxies # make the GIF
 | File | Purpose |
 |---|---|
 | `nbody.cu` | Simulation, CUDA kernels, scenario loader, verification and benchmark |
-| `render.py` | Turns a `frames.bin` into a GIF and a still `.png`, one colour per object |
+| `viewer.html` | Interactive player: timeline, play/pause, speed, 3D rotation, zoom |
+| `render.py` | Turns a `.frames` file into a GIF and a still `.png`, one colour per object |
 | `scenarios/` | Example scenarios and the format guide |
 | `simulate.bat`, `run_all.bat`, `benchmark.bat` | One-click scripts for Windows (`_build.bat` is a shared helper) |
 
@@ -114,6 +131,5 @@ python render.py frames.bin galaxies.gif galaxies # make the GIF
 
 - Real-time OpenGL rendering through CUDA–OpenGL interop, instead of writing frames to disk
 - Leapfrog or Runge-Kutta integration, plus an energy-conservation check
-- Real-time camera controls and a 3D view (the tilted scenarios are 3D, the GIF shows x–y)
 - Barnes–Hut tree, O(N log N), for millions of bodies
 - Multithreaded CPU baseline (OpenMP) for a fairer comparison

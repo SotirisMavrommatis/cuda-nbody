@@ -1,8 +1,10 @@
 @echo off
-REM Run one scenario and make a GIF.
+REM Run one scenario, then open it in the interactive viewer.
 REM   - Drag a scenario .txt file onto this .bat, or
 REM   - double-click it to run scenarios\galaxies.txt
-REM Results go to the output folder.
+REM Results go to the output folder:
+REM   <name>.frames  open it in viewer.html (play, pause, rewind, 3D)
+REM   <name>.gif     animated GIF of the same simulation
 
 cd /d "%~dp0"
 if not exist output mkdir output
@@ -17,17 +19,20 @@ call _build.bat "%LOG%"
 if errorlevel 1 goto :show
 
 echo ---- simulate ---- >> "%LOG%"
-nbody.exe "%SCEN%" output\frames.bin >> "%LOG%" 2>&1
+nbody.exe "%SCEN%" "output\%NAME%.frames" >> "%LOG%" 2>&1
 if errorlevel 1 goto :show
 
 echo ---- render GIF ---- >> "%LOG%"
 set PY=python
 if exist "%USERPROFILE%\anaconda3\python.exe" set PY=%USERPROFILE%\anaconda3\python.exe
-"%PY%" render.py output\frames.bin "output\%NAME%.gif" "%NAME%" >> "%LOG%" 2>&1
-del output\frames.bin
+"%PY%" render.py "output\%NAME%.frames" "output\%NAME%.gif" "%NAME%" >> "%LOG%" 2>&1
+
+echo. >> "%LOG%"
+echo Opening the viewer: drag output\%NAME%.frames into the browser window. >> "%LOG%"
+start "" viewer.html
+start "" explorer /select,"%~dp0output\%NAME%.frames"
 
 :show
 type "%LOG%"
 echo.
-echo Output is in the output folder.
 pause

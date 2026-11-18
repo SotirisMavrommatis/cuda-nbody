@@ -1,6 +1,6 @@
-"""Render frames.bin (written by nbody.exe) into an animated GIF and a still PNG.
+"""Render a .frames file (written by nbody.exe) into an animated GIF and a still PNG.
 
-Usage:  python render.py [frames.bin] [output.gif] [title]
+Usage:  python render.py <file.frames> [output.gif] [title]
 Needs numpy, matplotlib and pillow (all included with Anaconda).
 """
 import sys
@@ -12,18 +12,20 @@ matplotlib.use("Agg")  # render to files, no window
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation, PillowWriter
 
-src = sys.argv[1] if len(sys.argv) > 1 else "frames.bin"
+src = sys.argv[1] if len(sys.argv) > 1 else "out.frames"
 out = sys.argv[2] if len(sys.argv) > 2 else "simulation.gif"
 title = sys.argv[3] if len(sys.argv) > 3 else ""
 
 GALAXY, CLUSTER, BODY = 0, 1, 2
 
 with open(src, "rb") as f:
+    if f.read(4) != b"NBF2":
+        sys.exit(f"{src} is not a .frames file (or was made by an older nbody.exe)")
     n, frames, num_objects = (int(v) for v in np.fromfile(f, dtype=np.int32, count=3))
-    view = float(np.fromfile(f, dtype=np.float32, count=1)[0])
+    view, frame_time = (float(v) for v in np.fromfile(f, dtype=np.float32, count=2))
     types = np.fromfile(f, dtype=np.int32, count=num_objects)
     group = np.fromfile(f, dtype=np.int32, count=n)
-    data = np.fromfile(f, dtype=np.float32).reshape(-1, n, 2)
+    data = np.fromfile(f, dtype=np.float32).reshape(-1, n, 3)[:, :, :2]  # x, y only
 frames = data.shape[0]
 print(f"Loaded {frames} frames of {n} bodies ({num_objects} objects) from {src}")
 

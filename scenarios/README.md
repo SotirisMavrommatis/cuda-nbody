@@ -1,8 +1,8 @@
 # Scenario files
 
 A scenario is a plain text file that says **what is in the simulation and how it
-moves**. To run one on Windows, drag the `.txt` file onto `simulate.bat`. The GIF ends up
-in the `output` folder.
+moves**. To run one on Windows, drag the `.txt` file onto `simulate.bat`. The results go
+to the `output` folder: a `.frames` file to open in `viewer.html`, plus a GIF.
 
 ## Format
 

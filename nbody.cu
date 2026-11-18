@@ -4,8 +4,8 @@
 //
 // Usage:
 //   nbody bench                        verify CPU vs GPU, then benchmark several N
-//   nbody <scenario.txt> [frames.bin]  run a scenario on the GPU and save frames
-//                                      (render.py turns them into an animated GIF)
+//   nbody <scenario.txt> [out.frames]  run a scenario on the GPU and save frames
+//                                      (open them in viewer.html, or make a GIF with render.py)
 //
 // Scenario files describe what collides with what. See scenarios/README.md.
 //
@@ -537,11 +537,14 @@ void benchmark() {
 // ---------------------------------------------------------------------------
 // Run a scenario on the GPU and save x,y of every body every few steps.
 //
-// frames.bin format (all little-endian):
-//   int32 n, int32 frames, int32 numObjects, float32 view
+// .frames file format (all little-endian), read by render.py and viewer.html:
+//   char[4] "NBF2"
+//   int32 n, int32 frames, int32 numObjects
+//   float32 view                     suggested half-width of the picture
+//   float32 frameTime                simulation time between two saved frames
 //   int32 objectType[numObjects]     0 = galaxy, 1 = cluster, 2 = body
 //   int32 group[n]                   which object each body belongs to
-//   frames * n * (float32 x, float32 y)
+//   frames * n * (float32 x, float32 y, float32 z)
 // ---------------------------------------------------------------------------
 bool simulate(const Scenario& sc, const char* path) {
     std::vector<float4> hp, hv;
@@ -569,22 +572,27 @@ bool simulate(const Scenario& sc, const char* path) {
     if (!f) { printf("  ERROR: cannot write %s\n", path); sim.release(); return false; }
     std::vector<int> types(numObjects);
     for (int g = 0; g < numObjects; ++g) types[g] = (int)sc.objects[g].type;
+    float frameTime = sc.dt * sc.saveEvery;
+    fwrite("NBF2", 1, 4, f);
     fwrite(&n, sizeof(int), 1, f);
     fwrite(&frames, sizeof(int), 1, f);
     fwrite(&numObjects, sizeof(int), 1, f);
     fwrite(&sc.view, sizeof(float), 1, f);
+    fwrite(&frameTime, sizeof(float), 1, f);
     fwrite(types.data(), sizeof(int), numObjects, f);
     fwrite(group.data(), sizeof(int), n, f);
 
-    std::vector<float> xy(2 * (size_t)n);
+    std::vector<float> xyz(3 * (size_t)n);
     auto t0 = std::chrono::high_resolution_clock::now();
     int written = 0;
     for (int s = 1; s <= sc.steps && written < frames; ++s) {
         sim.step(true, sc.dt);
         if (s % sc.saveEvery == 0) {
             sim.downloadPos(hp);
-            for (int i = 0; i < n; ++i) { xy[2 * i] = hp[i].x; xy[2 * i + 1] = hp[i].y; }
-            fwrite(xy.data(), sizeof(float), xy.size(), f);
+            for (int i = 0; i < n; ++i) {
+                xyz[3 * i] = hp[i].x; xyz[3 * i + 1] = hp[i].y; xyz[3 * i + 2] = hp[i].z;
+            }
+            fwrite(xyz.data(), sizeof(float), xyz.size(), f);
             ++written;
         }
     }
@@ -603,7 +611,7 @@ int main(int argc, char** argv) {
     if (argc < 2) {
         printf("Usage:\n");
         printf("  nbody bench                        verify + benchmark\n");
-        printf("  nbody <scenario.txt> [frames.bin]  run a scenario\n");
+        printf("  nbody <scenario.txt> [out.frames]  run a scenario\n");
         return 1;
     }
 
@@ -622,6 +630,6 @@ int main(int argc, char** argv) {
         printf("Fix the scenario file and try again.\n");
         return 1;
     }
-    const char* out = (argc > 2) ? argv[2] : "frames.bin";
+    const char* out = (argc > 2) ? argv[2] : "out.frames";
     return simulate(sc, out) ? 0 : 1;
 }

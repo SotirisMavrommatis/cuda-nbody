@@ -1,5 +1,6 @@
 @echo off
-REM Run every scenario in the scenarios folder and make a GIF for each.
+REM Run every scenario in the scenarios folder.
+REM For each one you get output\<name>.frames (for viewer.html) and output\<name>.gif
 
 cd /d "%~dp0"
 if not exist output mkdir output
@@ -14,10 +15,9 @@ if exist "%USERPROFILE%\anaconda3\python.exe" set PY=%USERPROFILE%\anaconda3\pyt
 
 for %%F in (scenarios\*.txt) do (
     echo. >> "%LOG%"
-    nbody.exe "%%F" output\frames.bin >> "%LOG%" 2>&1
-    "%PY%" render.py output\frames.bin "output\%%~nF.gif" "%%~nF" >> "%LOG%" 2>&1
+    nbody.exe "%%F" "output\%%~nF.frames" >> "%LOG%" 2>&1
+    "%PY%" render.py "output\%%~nF.frames" "output\%%~nF.gif" "%%~nF" >> "%LOG%" 2>&1
 )
-if exist output\frames.bin del output\frames.bin
 echo. >> "%LOG%"
 echo ALL DONE >> "%LOG%"
 

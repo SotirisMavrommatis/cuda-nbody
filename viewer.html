@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>N-body viewer</title>
+<style>
+  :root {
+    --bg: #05060a;
+    --panel: #10131c;
+    --panel-2: #181c28;
+    --text: #e8ecf4;
+    --muted: #8a93a8;
+    --accent: #73bfff;
+    --border: #262b3a;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
+  #app { display: grid; grid-template-rows: auto 1fr auto; height: 100%; }
+
+  header { display: flex; align-items: center; gap: 16px; padding: 10px 16px;
+    background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .2px; }
+  #info { color: var(--muted); font-variant-numeric: tabular-nums; }
+  #legend { display: flex; gap: 12px; flex-wrap: wrap; margin-left: auto; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+
+  #stage { position: relative; overflow: hidden; }
+  canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+  canvas.dragging { cursor: grabbing; }
+
+  #drop { position: absolute; inset: 24px; border: 2px dashed var(--border); border-radius: 16px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+    text-align: center; color: var(--muted); background: rgba(16,19,28,.6); }
+  #drop.hover { border-color: var(--accent); color: var(--text); }
+  #drop.hidden { display: none; }
+  #drop strong { color: var(--text); font-size: 18px; }
+  #drop code { color: var(--accent); }
+
+  #hint { position: absolute; right: 12px; bottom: 10px; color: var(--muted); font-size: 12px;
+    background: rgba(16,19,28,.75); padding: 6px 10px; border-radius: 8px; pointer-events: none; }
+  #error { position: absolute; left: 50%; top: 16px; transform: translateX(-50%);
+    background: #3a1418; color: #ffb4b4; padding: 8px 14px; border-radius: 8px; display: none; }
+
+  footer { background: var(--panel); border-top: 1px solid var(--border); padding: 10px 16px;
+    display: grid; gap: 8px; }
+  .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  button, select, label.btn { background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 6px 10px; font: inherit; cursor: pointer; min-width: 38px;
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+  button:hover, select:hover, label.btn:hover { border-color: #3a4256; }
+  button:disabled { opacity: .4; cursor: default; }
+  button.primary { background: var(--accent); color: #06121f; border-color: var(--accent);
+    font-weight: 600; min-width: 84px; }
+  button.on { border-color: var(--accent); color: var(--accent); }
+  #timeline { flex: 1; min-width: 200px; accent-color: var(--accent); height: 24px; }
+  #time { font-variant-numeric: tabular-nums; color: var(--muted); min-width: 210px; text-align: right; }
+  .sep { width: 1px; height: 22px; background: var(--border); }
+  input[type=file] { display: none; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>N-body viewer</h1>
+    <span id="info">No simulation loaded</span>
+    <div id="legend"></div>
+  </header>
+
+  <div id="stage">
+    <canvas id="canvas"></canvas>
+    <div id="drop">
+      <strong>Drop a <code>.frames</code> file here</strong>
+      <span>Made by <code>simulate.bat</code>, saved in the <code>output</code> folder</span>
+      <label class="btn" for="file">Choose file…</label>
+    </div>
+    <div id="hint">Drag: rotate (3D) / move (2D) · Shift+drag: move · Wheel: zoom · Space: play/pause · ←/→: step</div>
+    <div id="error"></div>
+  </div>
+
+  <footer>
+    <div class="row">
+      <button id="btnStart" title="Back to start (Home)" disabled>⏮</button>
+      <button id="btnBack" title="One frame back (←)" disabled>◀◀</button>
+      <button id="btnPlay" class="primary" title="Play / pause (Space)" disabled>▶ Play</button>
+      <button id="btnFwd" title="One frame forward (→)" disabled>▶▶</button>
+      <button id="btnEnd" title="Jump to end (End)" disabled>⏭</button>
+      <input id="timeline" type="range" min="0" max="0" step="0.001" value="0" disabled>
+      <span id="time">t = 0.00 / 0.00</span>
+    </div>
+    <div class="row">
+      <label for="speed" style="color:var(--muted)">Speed</label>
+      <select id="speed" title="Playback speed (+ / −)">
+        <option value="-2">◀ 2× (reverse)</option>
+        <option value="-1">◀ 1× (reverse)</option>
+        <option value="0.1">0.1×</option>
+        <option value="0.25">0.25×</option>
+        <option value="0.5">0.5×</option>
+        <option value="1" selected>1×</option>
+        <option value="2">2×</option>
+        <option value="4">4×</option>
+      </select>
+      <button id="btnLoop" class="on" title="Loop at the end">⟳ Loop</button>
+      <span class="sep"></span>
+      <button id="btn3d" title="Switch between top view (2D) and free rotation (3D)">3D view</button>
+      <button id="btnTrails" title="Leave fading trails behind moving bodies">Trails</button>
+      <button id="btnReset" title="Reset camera">Reset camera</button>
+      <span class="sep"></span>
+      <label class="btn" for="file" title="Open another .frames file">Open…</label>
+      <input id="file" type="file" accept=".frames">
+    </div>
+  </footer>
+</div>
+
+<script>
+"use strict";
+
+// ---------------------------------------------------------------------------
+// Colours: same palette as render.py. Heavy single bodies are drawn white.
+// ---------------------------------------------------------------------------
+const PALETTE = [
+  [115, 191, 255], [255, 166, 77], [140, 255, 140], [255, 115, 179],
+  [204, 153, 255], [255, 242, 115], [102, 255, 242], [255, 140, 128],
+];
+const TYPE_NAMES = ["galaxy", "cluster", "body"];
+const BODY = 2;
+const BASE_FPS = 30;          // at 1× speed, 30 saved frames are shown per second
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+let sim = null;               // loaded simulation
+let t = 0;                    // current position on the timeline, in frames (fractional)
+let playing = false;
+let speed = 1;
+let loop = true;
+let trails = false;
+let mode3d = false;
+let lastTick = 0;
+const cam = { yaw: 0, pitch: 0, zoom: 1, panX: 0, panY: 0 };
+
+const $ = (id) => document.getElementById(id);
+const canvas = $("canvas");
+const ctx = canvas.getContext("2d");
+
+// ---------------------------------------------------------------------------
+// Loading a .frames file (format written by nbody.cu)
+// ---------------------------------------------------------------------------
+function parseFrames(buffer, name) {
+  const dv = new DataView(buffer);
+  const magic = String.fromCharCode(dv.getUint8(0), dv.getUint8(1), dv.getUint8(2), dv.getUint8(3));
+  if (magic !== "NBF2") throw new Error("This is not a .frames file made by nbody.exe (or it was made by an older version).");
+  let off = 4;
+  const n = dv.getInt32(off, true); off += 4;
+  const framesInHeader = dv.getInt32(off, true); off += 4;
+  const numObjects = dv.getInt32(off, true); off += 4;
+  const view = dv.getFloat32(off, true); off += 4;
+  const frameTime = dv.getFloat32(off, true); off += 4;
+  const types = new Int32Array(buffer.slice(off, off + 4 * numObjects)); off += 4 * numObjects;
+  const group = new Int32Array(buffer.slice(off, off + 4 * n)); off += 4 * n;
+
+  const floatsPerFrame = 3 * n;
+  const available = Math.floor((buffer.byteLength - off) / (4 * floatsPerFrame));
+  const frames = Math.min(framesInHeader, available);
+  if (n <= 0 || frames <= 0) throw new Error("The file contains no frames.");
+  const pos = new Float32Array(buffer, off, frames * floatsPerFrame);
+
+  // Per-body colour and whether it is a heavy single body.
+  const color = new Array(n);
+  const isBody = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    const g = group[i];
+    isBody[i] = types[g] === BODY ? 1 : 0;
+    const c = PALETTE[g % PALETTE.length];
+    color[i] = `rgb(${c[0]},${c[1]},${c[2]})`;
+  }
+  // Group bodies by colour so we change fillStyle only once per object.
+  const byGroup = [];
+  for (let g = 0; g < numObjects; g++) byGroup.push([]);
+  for (let i = 0; i < n; i++) if (!isBody[i]) byGroup[group[i]].push(i);
+  const heavy = [];
+  for (let i = 0; i < n; i++) if (isBody[i]) heavy.push(i);
+
+  return { name, n, frames, numObjects, view, frameTime, types, group, pos,
+           byGroup: byGroup.map((a) => Int32Array.from(a)), heavy };
+}
+
+function loadFile(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      sim = parseFrames(reader.result, file.name);
+      onLoaded();
+    } catch (e) {
+      showError(e.message);
+    }
+  };
+  reader.onerror = () => showError("Could not read the file.");
+  reader.readAsArrayBuffer(file);
+}
+
+function onLoaded() {
+  hideError();
+  $("drop").classList.add("hidden");
+  t = 0;
+  resetCamera();
+  for (const id of ["btnStart", "btnBack", "btnPlay", "btnFwd", "btnEnd", "timeline"]) $(id).disabled = false;
+  $("timeline").max = sim.frames - 1;
+  const counts = sim.byGroup.map((a) => a.length);
+  sim.heavy.forEach((i) => counts[sim.group[i]]++);
+  $("info").textContent = `${sim.name} · ${sim.n.toLocaleString()} bodies · ${sim.frames} frames`;
+  $("legend").innerHTML = "";
+  for (let g = 0; g < sim.numObjects; g++) {
+    const c = sim.types[g] === BODY ? [255, 255, 255] : PALETTE[g % PALETTE.length];
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    chip.innerHTML = `<span class="dot" style="background:rgb(${c})"></span>${TYPE_NAMES[sim.types[g]] || "object"} ${g + 1}` +
+      (sim.types[g] === BODY ? "" : ` (${counts[g].toLocaleString()})`);
+    $("legend").appendChild(chip);
+  }
+  setPlaying(true);
+  draw(true);
+}
+
+// ---------------------------------------------------------------------------
+// Camera and drawing
+// ---------------------------------------------------------------------------
+function resetCamera() {
+  cam.zoom = 1; cam.panX = 0; cam.panY = 0;
+  cam.yaw = mode3d ? 0.6 : 0;
+  cam.pitch = mode3d ? -0.9 : 0;
+}
+
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  const r = canvas.getBoundingClientRect();
+  canvas.width = Math.max(1, Math.round(r.width * dpr));
+  canvas.height = Math.max(1, Math.round(r.height * dpr));
+  draw(true);
+}
+
+// Position of body i at fractional frame t (linear interpolation = smooth slow motion).
+function framePair(tt) {
+  const f0 = Math.max(0, Math.min(sim.frames - 1, Math.floor(tt)));
+  const f1 = Math.min(sim.frames - 1, f0 + 1);
+  return [f0 * 3 * sim.n, f1 * 3 * sim.n, tt - f0];
+}
+
+function draw(clear) {
+  const W = canvas.width, H = canvas.height;
+  if (!sim) {
+    ctx.fillStyle = "#05060a";
+    ctx.fillRect(0, 0, W, H);
+    return;
+  }
+  // Background: full clear, or a translucent fill that leaves fading trails.
+  ctx.globalCompositeOperation = "source-over";
+  ctx.fillStyle = (trails && !clear) ? "rgba(5,6,10,0.18)" : "#05060a";
+  ctx.fillRect(0, 0, W, H);
+
+  const scale = (Math.min(W, H) / 2) / sim.view * cam.zoom;
+  const cx = W / 2 + cam.panX * scale, cy = H / 2 + cam.panY * scale;
+  const cyaw = Math.cos(cam.yaw), syaw = Math.sin(cam.yaw);
+  const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
+  const [o0, o1, a] = framePair(t);
+  const P = sim.pos;
+  const dpr = window.devicePixelRatio || 1;
+  const dot = Math.max(1, Math.min(3, 9000 / sim.n)) * dpr * Math.sqrt(cam.zoom) * 0.9;
+
+  // Rotate (yaw around z, then pitch around x) and project orthographically.
+  function project(i, out) {
+    const k0 = o0 + 3 * i, k1 = o1 + 3 * i;
+    const x = P[k0] + (P[k1] - P[k0]) * a;
+    const y = P[k0 + 1] + (P[k1 + 1] - P[k0 + 1]) * a;
+    const z = P[k0 + 2] + (P[k1 + 2] - P[k0 + 2]) * a;
+    const x1 = x * cyaw - y * syaw;
+    const y1 = x * syaw + y * cyaw;
+    const y2 = y1 * cp - z * sp;
+    out[0] = cx + x1 * scale;
+    out[1] = cy - y2 * scale;
+  }
+
+  const p = [0, 0];
+  ctx.globalCompositeOperation = "lighter";   // overlapping stars glow brighter
+  ctx.globalAlpha = 0.75;
+  for (let g = 0; g < sim.numObjects; g++) {
+    const idx = sim.byGroup[g];
+    if (!idx.length) continue;
+    const c = PALETTE[g % PALETTE.length];
+    ctx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
+    for (let j = 0; j < idx.length; j++) {
+      project(idx[j], p);
+      if (p[0] < -4 || p[1] < -4 || p[0] > W + 4 || p[1] > H + 4) continue;
+      ctx.fillRect(p[0] - dot / 2, p[1] - dot / 2, dot, dot);
+    }
+  }
+
+  // Heavy bodies: white core with a soft glow.
+  ctx.globalAlpha = 1;
+  for (const i of sim.heavy) {
+    project(i, p);
+    const r = 14 * dpr;
+    const grad = ctx.createRadialGradient(p[0], p[1], 0, p[0], p[1], r);
+    grad.addColorStop(0, "rgba(255,255,255,1)");
+    grad.addColorStop(0.25, "rgba(255,255,255,0.9)");
+    grad.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(p[0], p[1], r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalCompositeOperation = "source-over";
+  updateTimeUI();
+}
+
+// ---------------------------------------------------------------------------
+// Playback
+// ---------------------------------------------------------------------------
+function setPlaying(on) {
+  if (!sim) return;
+  playing = on;
+  $("btnPlay").textContent = on ? "⏸ Pause" : "▶ Play";
+  lastTick = performance.now();
+}
+
+function seek(frame, clear = true) {
+  if (!sim) return;
+  t = Math.max(0, Math.min(sim.frames - 1, frame));
+  draw(clear);
+}
+
+function step(dir) {
+  setPlaying(false);
+  seek(dir > 0 ? Math.floor(t) + 1 : Math.ceil(t) - 1);
+}
+
+function tick(now) {
+  if (sim && playing) {
+    const dtSec = Math.min(0.1, (now - lastTick) / 1000);
+    lastTick = now;
+    let next = t + dtSec * BASE_FPS * speed;
+    const last = sim.frames - 1;
+    if (next > last) {
+      if (loop) next = 0; else { next = last; setPlaying(false); }
+      t = next; draw(true);
+    } else if (next < 0) {
+      if (loop) next = last; else { next = 0; setPlaying(false); }
+      t = next; draw(true);
+    } else {
+      t = next; draw(false);
+    }
+  }
+  requestAnimationFrame(tick);
+}
+
+function updateTimeUI() {
+  const tl = $("timeline");
+  if (document.activeElement !== tl || playing) tl.value = t;
+  const simT = t * sim.frameTime, total = (sim.frames - 1) * sim.frameTime;
+  $("time").textContent = `t = ${simT.toFixed(2)} / ${total.toFixed(2)}   ·   frame ${Math.round(t) + 1}/${sim.frames}`;
+}
+
+// ---------------------------------------------------------------------------
+// UI wiring
+// ---------------------------------------------------------------------------
+$("btnPlay").onclick = () => {
+  if (!sim) return;
+  // Pressing play at the very end (or start, in reverse) starts over.
+  if (!playing && speed > 0 && t >= sim.frames - 1) t = 0;
+  if (!playing && speed < 0 && t <= 0) t = sim.frames - 1;
+  setPlaying(!playing);
+};
+$("btnStart").onclick = () => { setPlaying(false); seek(0); };
+$("btnEnd").onclick = () => { setPlaying(false); seek(sim.frames - 1); };
+$("btnBack").onclick = () => step(-1);
+$("btnFwd").onclick = () => step(1);
+$("timeline").oninput = (e) => { setPlaying(false); seek(parseFloat(e.target.value)); };
+$("speed").onchange = (e) => { speed = parseFloat(e.target.value); e.target.blur(); };
+$("btnLoop").onclick = () => { loop = !loop; $("btnLoop").classList.toggle("on", loop); };
+$("btnTrails").onclick = () => { trails = !trails; $("btnTrails").classList.toggle("on", trails); draw(true); };
+$("btn3d").onclick = () => {
+  mode3d = !mode3d;
+  $("btn3d").classList.toggle("on", mode3d);
+  resetCamera(); draw(true);
+};
+$("btnReset").onclick = () => { resetCamera(); draw(true); };
+$("file").onchange = (e) => { if (e.target.files[0]) loadFile(e.target.files[0]); e.target.value = ""; };
+
+// Drag & drop a file anywhere on the page.
+window.addEventListener("dragover", (e) => { e.preventDefault(); $("drop").classList.add("hover"); });
+window.addEventListener("dragleave", () => $("drop").classList.remove("hover"));
+window.addEventListener("drop", (e) => {
+  e.preventDefault();
+  $("drop").classList.remove("hover");
+  if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+});
+
+// Mouse: drag rotates (3D) or pans (2D / Shift), wheel zooms toward the cursor.
+let drag = null;
+canvas.addEventListener("pointerdown", (e) => {
+  drag = { x: e.clientX, y: e.clientY, pan: e.shiftKey || !mode3d };
+  canvas.setPointerCapture(e.pointerId);
+  canvas.classList.add("dragging");
+});
+canvas.addEventListener("pointermove", (e) => {
+  if (!drag || !sim) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  drag.x = e.clientX; drag.y = e.clientY;
+  if (drag.pan) {
+    const scale = (Math.min(canvas.clientWidth, canvas.clientHeight) / 2) / sim.view * cam.zoom;
+    cam.panX += dx / scale; cam.panY += dy / scale;
+  } else {
+    cam.yaw += dx * 0.008;
+    cam.pitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, cam.pitch + dy * 0.008));
+  }
+  draw(true);
+});
+canvas.addEventListener("pointerup", () => { drag = null; canvas.classList.remove("dragging"); });
+canvas.addEventListener("wheel", (e) => {
+  if (!sim) return;
+  e.preventDefault();
+  const factor = Math.exp(-e.deltaY * 0.0015);
+  // Keep the point under the cursor fixed while zooming.
+  const r = canvas.getBoundingClientRect();
+  const scale = (Math.min(r.width, r.height) / 2) / sim.view * cam.zoom;
+  const mx = (e.clientX - r.left - r.width / 2) / scale - cam.panX;
+  const my = (e.clientY - r.top - r.height / 2) / scale - cam.panY;
+  cam.zoom = Math.max(0.1, Math.min(50, cam.zoom * factor));
+  cam.panX = -mx + (mx + cam.panX) / factor;
+  cam.panY = -my + (my + cam.panY) / factor;
+  draw(true);
+}, { passive: false });
+
+// Keyboard shortcuts.
+window.addEventListener("keydown", (e) => {
+  if (!sim || e.target.tagName === "SELECT") return;
+  const speeds = Array.from($("speed").options).map((o) => parseFloat(o.value));
+  switch (e.key) {
+    case " ": e.preventDefault(); $("btnPlay").click(); break;
+    case "ArrowLeft": e.preventDefault(); step(-1); break;
+    case "ArrowRight": e.preventDefault(); step(1); break;
+    case "Home": setPlaying(false); seek(0); break;
+    case "End": setPlaying(false); seek(sim.frames - 1); break;
+    case "+": case "=": {
+      const i = Math.min(speeds.length - 1, speeds.indexOf(speed) + 1);
+      speed = speeds[i]; $("speed").value = String(speed); break;
+    }
+    case "-": {
+      const i = Math.max(0, speeds.indexOf(speed) - 1);
+      speed = speeds[i]; $("speed").value = String(speed); break;
+    }
+  }
+});
+
+// Don't leave focus on a button or the slider, so Space and the arrow keys
+// always go to the shortcuts instead of re-pressing the last button.
+document.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => b.blur()));
+$("timeline").addEventListener("change", (e) => e.target.blur());
+
+function showError(msg) { const el = $("error"); el.textContent = msg; el.style.display = "block"; }
+function hideError() { $("error").style.display = "none"; }
+
+window.addEventListener("resize", resize);
+resize();
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>
