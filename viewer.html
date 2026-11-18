@@ -105,6 +105,8 @@
   .runrow { display: flex; gap: 6px; margin-top: 8px; }
   .runrow button.primary { flex: 1; padding: 9px; font-size: 15px; }
   #runStatus { margin-top: 8px; font-size: 13px; min-height: 18px; }
+  #progressWrap { margin-top: 8px; height: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+  #progressBar { height: 100%; width: 0; background: var(--accent); transition: width .15s; }
   #runStatus.err { color: var(--bad); }
   #runStatus.ok { color: var(--good); }
   details { margin-top: 6px; }
@@ -166,11 +168,20 @@
           <label class="field"><span>Name</span><input id="scenName" type="text" value="my_scenario"></label>
           <label class="field"><span>Start from an example</span><select id="examples"><option value="">—</option></select></label>
         </div>
+        <div class="grid2" style="margin-top:6px">
+          <label class="field" style="grid-column: span 2"><span>Engine</span><select id="engine"></select></label>
+        </div>
+        <details id="gpuTip" class="muted" hidden><summary>Slow? Your browser may be using the weaker graphics chip</summary>
+          <div class="note" style="margin-top:6px">Many laptops have two graphics chips, and browsers often pick the built-in, slower one.
+          On Windows: <b>Settings → System → Display → Graphics</b>, choose your browser, set it to
+          <b>High performance</b>, then restart the browser.</div></details>
         <div class="runrow">
           <button id="btnRun" class="primary" title="Run on the GPU and play it">▶ Run simulation</button>
+          <button id="btnStop" class="danger" title="Stop the simulation" hidden>■ Stop</button>
           <button id="btnSave" title="Save the scenario as a .txt file">Save</button>
           <button id="btnClear" class="danger" title="Remove all objects">Clear</button>
         </div>
+        <div id="progressWrap" hidden><div id="progressBar"></div></div>
         <div id="runStatus"></div>
         <details id="logBox" hidden><summary class="muted">Simulation log</summary><pre id="runLog"></pre></details>
         <div id="serverNote" class="note" hidden></div>
@@ -219,6 +230,7 @@
       <button id="btnReset" title="Reset camera">Reset camera</button>
       <span class="sep"></span>
       <label class="btn" for="file" title="Open a .frames file">Open…</label>
+      <button id="btnDownload" title="Save this simulation as a .frames file" disabled>Save .frames</button>
       <input id="file" type="file" accept=".frames">
     </div>
   </footer>
@@ -710,15 +722,18 @@ function refreshStats() {
   const s = scenario.settings, n = totalBodies(scenario);
   const frames = Math.floor(s.steps / Math.max(1, s.save_every));
   const mb = n * frames * 12 / 1e6;
-  // From benchmark.bat on an RTX 5070 Laptop: ~0.6 ms per step at 16K bodies, grows with N².
+  const engine = $("engine") ? $("engine").value : "";
+  const limitBodies = engine === "webgpu" ? WEB_LIMITS.bodies : 131072;
+  const limitMB = engine === "webgpu" ? WEB_LIMITS.bytes / 1e6 : 1500;
+  // From benchmark.bat on an RTX 5070 Laptop (CUDA): ~0.6 ms per step at 16K bodies, grows with N².
   const sec = s.steps * Math.max(0.03, 0.602 * (n / 16384) ** 2) / 1000;
   const warn = [];
-  if (n > 131072) warn.push("More than 131,072 bodies: the studio will refuse to run it.");
-  else if (n > 65536) warn.push("Many bodies: this will take a while.");
-  if (mb > 1500) warn.push("The result file would be very large: raise “save every”.");
+  if (n > limitBodies) warn.push(`More than ${limitBodies.toLocaleString()} bodies: this engine will refuse to run it.`);
+  else if (n > 32768) warn.push("Many bodies: this will take a while.");
+  if (mb > limitMB) warn.push("The result would be too large: raise “save every”.");
   $("stats").innerHTML =
     `<b>${n.toLocaleString()}</b> bodies · <b>${frames}</b> frames · about <b>${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB</b><br>` +
-    `Simulated time <b>${fmt(s.steps * s.dt)}</b> · GPU time roughly <b>${sec < 1 ? "<1" : sec.toFixed(0)} s</b>` +
+    `Simulated time <b>${fmt(s.steps * s.dt)}</b> · GPU time on a laptop RTX 5070 with CUDA ≈ <b>${sec < 1 ? "<1" : sec.toFixed(0)} s</b>` +
     warn.map((w) => `<br><span class="warn">⚠ ${w}</span>`).join("");
 }
 
@@ -774,90 +789,387 @@ function updateHeaderForBuild() {
   $("legend").innerHTML = "";
 }
 
-// ---- Server: examples, save, run ------------------------------------------------
-let server = false;
+// ===========================================================================
+// RUNNING SIMULATIONS
+// Two engines:
+//   - WebGPU: runs right here in the browser, on any modern graphics card
+//   - CUDA:   runs nbody.exe through server.py (start_studio.bat), NVIDIA only
+// ===========================================================================
+const EXAMPLES = ["galaxies", "galaxy_vs_cluster", "black_hole_flyby", "cluster_merger", "tilted_galaxies"];
+const WEB_LIMITS = { bodies: 65536, bytes: 800e6 };
+const caps = { webgpu: false, webgpuInfo: "", server: false, nbody: false };
+let stopRequested = false;
 
-async function checkServer() {
-  if (!location.protocol.startsWith("http")) return noServer();
-  try {
-    const r = await fetch("/api/status");
-    const st = await r.json();
-    server = !!st.ok;
-    if (!st.nbody) { $("serverNote").hidden = false; $("serverNote").innerHTML = "nbody.exe was not found next to the studio. Start it with <code>start_studio.bat</code> so it gets compiled."; }
-    const ex = await (await fetch("/api/scenarios")).json();
-    const sel = $("examples");
-    for (const s of ex.scenarios) {
-      const opt = document.createElement("option");
-      opt.value = s.name; opt.textContent = s.name; opt.dataset.text = s.text;
-      sel.appendChild(opt);
+async function detectEngines() {
+  // WebGPU in this browser?
+  if (navigator.gpu) {
+    try {
+      const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
+      if (adapter) {
+        caps.webgpu = true;
+        const info = adapter.info || {};
+        caps.webgpuInfo = [info.vendor, info.architecture || info.device].filter(Boolean).join(" ");
+      }
+    } catch (e) { /* no WebGPU */ }
+  }
+  // Local CUDA server (start_studio.bat)? Only looked for on this computer, not on the web.
+  if (location.protocol.startsWith("http") && ["127.0.0.1", "localhost"].includes(location.hostname)) {
+    try {
+      const r = await fetch("api/status");
+      if (r.ok) { const st = await r.json(); caps.server = !!st.ok; caps.nbody = !!st.nbody; }
+    } catch (e) { /* static hosting, e.g. GitHub Pages */ }
+  }
+
+  const sel = $("engine");
+  sel.innerHTML = "";
+  if (caps.webgpu) sel.add(new Option(`WebGPU, in this browser${caps.webgpuInfo ? " (" + caps.webgpuInfo + ")" : ""}`, "webgpu"));
+  if (caps.server) sel.add(new Option(caps.nbody ? "CUDA, nbody.exe (NVIDIA, fastest)" : "CUDA, nbody.exe (not compiled yet)", "cuda"));
+  if (!sel.options.length) sel.add(new Option("No engine available", ""));
+  sel.disabled = sel.options.length < 2;
+
+  const notes = [];
+  if (!caps.webgpu) notes.push("This browser has no WebGPU, so it can't run simulations by itself. Use a recent Chrome or Edge, or start <code>start_studio.bat</code> to use CUDA.");
+  if (caps.server && !caps.nbody) notes.push("nbody.exe was not found. Start the studio with <code>start_studio.bat</code> so it gets compiled.");
+  $("serverNote").hidden = !notes.length;
+  $("serverNote").innerHTML = notes.join("<br><br>");
+  $("btnRun").disabled = !sel.value;
+  $("gpuTip").hidden = !caps.webgpu;
+
+  // Examples: served as plain files next to this page (works on GitHub Pages too).
+  if (location.protocol.startsWith("http")) {
+    let names = EXAMPLES;
+    if (caps.server) {
+      try { names = (await (await fetch("api/scenarios")).json()).scenarios.map((s) => s.name); } catch (e) { /* keep defaults */ }
     }
-  } catch (e) { noServer(); }
-}
-function noServer() {
-  server = false;
-  $("btnRun").disabled = true;
-  $("btnRun").title = "Start start_studio.bat to run simulations from here";
-  $("serverNote").hidden = false;
-  $("serverNote").innerHTML = "This page was opened as a plain file, so it can't start simulations. " +
-    "Double-click <code>start_studio.bat</code> to open the full studio. Here you can still design a scenario and save it.";
-  $("examples").disabled = true;
-  $("examples").title = "Available when the studio is started with start_studio.bat";
+    for (const name of names) $("examples").add(new Option(name, name));
+  } else {
+    $("examples").disabled = true;
+    $("examples").title = "Examples load when the page is served (start_studio.bat or the online version)";
+  }
+  refreshStats();
 }
 
-$("examples").onchange = (e) => {
-  const opt = e.target.selectedOptions[0];
-  if (opt && opt.dataset.text) loadScenarioText(opt.dataset.text, opt.value);
+$("examples").onchange = async (e) => {
+  const name = e.target.value;
   e.target.value = "";
+  if (!name) return;
+  try {
+    const r = await fetch(`scenarios/${encodeURIComponent(name)}.txt`, { cache: "no-store" });
+    if (!r.ok) throw new Error();
+    loadScenarioText(await r.text(), name);
+  } catch (err) { setStatus(`Could not load the example ${name}.`, "err"); }
 };
 
 $("btnSave").onclick = async () => {
   const name = $("scenName").value.trim() || "my_scenario";
   const text = $("scenarioText").value;
-  if (server) {
-    const r = await fetch("/api/save", { method: "POST", headers: { "Content-Type": "application/json" },
+  if (caps.server) {
+    const r = await fetch("api/save", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name, text }) });
     const res = await r.json();
     setStatus(res.ok ? `Saved to ${res.path}` : "Could not save.", res.ok ? "ok" : "err");
   } else {
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
-    a.download = name.replace(/[^\w\-]+/g, "_") + ".txt";
-    a.click();
-    URL.revokeObjectURL(a.href);
-    setStatus("Downloaded. Put it in the scenarios folder to use it with simulate.bat.", "ok");
+    downloadBlob(new Blob([text], { type: "text/plain" }), name.replace(/[^\w\-]+/g, "_") + ".txt");
+    setStatus("Downloaded the scenario as a .txt file.", "ok");
   }
 };
+
+function downloadBlob(blob, filename) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
 
 function setStatus(html, cls = "") {
   $("runStatus").className = cls;
   $("runStatus").innerHTML = html;
 }
+function setProgress(frac) {
+  $("progressWrap").hidden = frac === null;
+  if (frac !== null) $("progressBar").style.width = `${Math.round(frac * 100)}%`;
+}
+
+$("btnStop").onclick = () => { stopRequested = true; };
+$("engine").onchange = () => { refreshStats(); $("engine").blur(); };
 
 $("btnRun").onclick = async () => {
-  if (!server) return;
   if (textHasErrors) { setStatus("Fix the errors in the scenario text first.", "err"); return; }
   if (!scenario.objects.length) { setStatus("Add at least one object first.", "err"); return; }
+  const engine = $("engine").value;
   const name = $("scenName").value.trim() || "my_scenario";
   $("btnRun").disabled = true;
-  setStatus(`<span class="spinner"></span>Simulating ${totalBodies(scenario).toLocaleString()} bodies on the GPU…`);
   $("logBox").hidden = true;
+  stopRequested = false;
   try {
-    const r = await fetch("/api/simulate", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, text: $("scenarioText").value }) });
-    const res = await r.json();
-    if (res.log) { $("runLog").textContent = res.log; $("logBox").hidden = false; }
-    if (!res.ok) { setStatus(res.error || "The simulation failed.", "err"); return; }
-    setStatus(`<span class="spinner"></span>Loading the result…`);
-    const buf = await (await fetch(res.frames)).arrayBuffer();
-    sim = parseFrames(buf, name);
-    setStatus("Done. Playing in the Watch tab.", "ok");
+    const result = engine === "webgpu" ? await runWebGPU(scenario, name) : await runCuda(name);
+    if (!result) return;
+    sim = result;
     onLoaded();
     setMode("watch");
   } catch (e) {
-    setStatus("Could not reach the studio server. Is the start_studio window still open?", "err");
+    setStatus(e.message || String(e), "err");
   } finally {
     $("btnRun").disabled = false;
+    $("btnStop").hidden = true;
+    setProgress(null);
   }
+};
+
+// ---- CUDA engine (server.py + nbody.exe) -------------------------------------
+async function runCuda(name) {
+  setStatus(`<span class="spinner"></span>Simulating ${totalBodies(scenario).toLocaleString()} bodies with CUDA…`);
+  let res;
+  try {
+    const r = await fetch("api/simulate", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, text: $("scenarioText").value }) });
+    res = await r.json();
+  } catch (e) {
+    throw new Error("Could not reach the studio server. Is the start_studio window still open?");
+  }
+  if (res.log) { $("runLog").textContent = res.log; $("logBox").hidden = false; }
+  if (!res.ok) throw new Error(res.error || "The simulation failed.");
+  setStatus(`<span class="spinner"></span>Loading the result…`);
+  const buf = await (await fetch(res.frames.replace(/^\//, ""))).arrayBuffer();
+  const s = parseFrames(buf, name);
+  setStatus("Done (CUDA). Playing in the Watch tab.", "ok");
+  return s;
+}
+
+// ---- Initial conditions: JavaScript port of nbody.cu ---------------------------
+// Uses its own seeded random numbers, so the stars are placed differently from
+// nbody.exe, but with exactly the same recipe.
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function buildBodies(sc) {
+  const rnd = mulberry32(sc.settings.seed || 42);
+  const n = totalBodies(sc);
+  const pos = new Float32Array(4 * n), vel = new Float32Array(4 * n), group = new Int32Array(n);
+  let i = 0;
+  const put = (x, y, z, m, vx, vy, vz, g) => {
+    pos[4 * i] = x; pos[4 * i + 1] = y; pos[4 * i + 2] = z; pos[4 * i + 3] = m;
+    vel[4 * i] = vx; vel[4 * i + 1] = vy; vel[4 * i + 2] = vz;
+    group[i] = g; i++;
+  };
+  const randomDirection = (len) => {
+    const zc = 2 * rnd() - 1, phi = 2 * Math.PI * rnd(), rxy = Math.sqrt(Math.max(0, 1 - zc * zc));
+    return [len * rxy * Math.cos(phi), len * rxy * Math.sin(phi), len * zc];
+  };
+
+  sc.objects.forEach((o, g) => {
+    if (o.type === "galaxy") {
+      // Heavy centre + thin disk of stars on circular orbits, tilted around the x axis.
+      const tilt = o.tilt * Math.PI / 180, ct = Math.cos(tilt), st = Math.sin(tilt);
+      put(o.x, o.y, o.z, o.mass, o.vx, o.vy, o.vz, g);
+      const stars = o.count - 1, starMass = stars > 0 ? o.disk_mass / stars : 0;
+      for (let k = 0; k < stars; k++) {
+        const u = rnd();
+        const r = Math.sqrt(o.inner * o.inner + u * (o.radius * o.radius - o.inner * o.inner));
+        const theta = 2 * Math.PI * rnd();
+        const h = 0.01 * (rnd() - 0.5) * 2;
+        const v = Math.sqrt((o.mass + o.disk_mass * u) / r);
+        const c = Math.cos(theta), s = Math.sin(theta);
+        const px = r * c, py = r * s, pz = h;
+        const qx = -o.spin * v * s, qy = o.spin * v * c, qz = 0;
+        put(o.x + px, o.y + py * ct - pz * st, o.z + py * st + pz * ct, starMass,
+            o.vx + qx, o.vy + qy * ct - qz * st, o.vz + qy * st + qz * ct, g);
+      }
+    } else if (o.type === "cluster") {
+      // Plummer sphere (Aarseth, Henon & Wielen 1974).
+      const a = o.radius, m = o.mass / o.count;
+      for (let k = 0; k < o.count; k++) {
+        let r;
+        do { const u = Math.max(rnd(), 1e-6); r = a / Math.sqrt(Math.pow(u, -2 / 3) - 1); } while (r > 8 * a);
+        const p = randomDirection(r);
+        let q, y;
+        do { q = rnd(); y = 0.1 * rnd(); } while (y > q * q * Math.pow(1 - q * q, 3.5));
+        const vesc = Math.sqrt(2 * o.mass) * Math.pow(r * r + a * a, -0.25);
+        const v = randomDirection(q * vesc);
+        put(o.x + p[0], o.y + p[1], o.z + p[2], m, o.vx + v[0], o.vy + v[1], o.vz + v[2], g);
+      }
+    } else {
+      put(o.x, o.y, o.z, o.mass, o.vx, o.vy, o.vz, g);
+    }
+  });
+  return { n, pos, vel, group };
+}
+
+// ---- WebGPU engine ---------------------------------------------------------------
+// Same algorithm as the tiled CUDA kernel: each workgroup loads 256 bodies into
+// workgroup (shared) memory, and every thread adds up their pull on its own body.
+const WG = 256;
+const WGSL = /* wgsl */`
+struct Params { n: u32, dt: f32, soft2: f32, pad: f32 };
+@group(0) @binding(0) var<uniform> P: Params;
+@group(0) @binding(1) var<storage, read> posIn: array<vec4f>;
+@group(0) @binding(2) var<storage, read_write> vel: array<vec4f>;
+@group(0) @binding(3) var<storage, read_write> posOut: array<vec4f>;
+
+var<workgroup> tile: array<vec4f, ${WG}>;
+
+@compute @workgroup_size(${WG})
+fn step(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_id) lid: vec3u) {
+  let i = gid.x;
+  var bi = vec4f(0.0);
+  if (i < P.n) { bi = posIn[i]; }
+  var acc = vec3f(0.0);
+
+  for (var start = 0u; start < P.n; start += ${WG}u) {
+    let j = start + lid.x;
+    var bj = vec4f(0.0);                 // mass 0 = no force for padding slots
+    if (j < P.n) { bj = posIn[j]; }
+    tile[lid.x] = bj;
+    workgroupBarrier();
+    for (var k = 0u; k < ${WG}u; k++) {
+      let b = tile[k];
+      let r = b.xyz - bi.xyz;
+      let invDist = inverseSqrt(dot(r, r) + P.soft2);
+      acc += r * (b.w * invDist * invDist * invDist);   // G = 1
+    }
+    workgroupBarrier();
+  }
+
+  if (i < P.n) {
+    // Semi-implicit Euler, same as nbody.cu
+    let v = vel[i].xyz + acc * P.dt;
+    vel[i] = vec4f(v, 0.0);
+    posOut[i] = vec4f(bi.xyz + v * P.dt, bi.w);
+  }
+}`;
+
+async function runWebGPU(sc, name) {
+  const n = totalBodies(sc);
+  const steps = Math.max(1, Math.trunc(sc.settings.steps));
+  const saveEvery = Math.max(1, Math.trunc(sc.settings.save_every));
+  const frames = Math.floor(steps / saveEvery);
+  const dt = sc.settings.dt;
+  if (frames < 1) throw new Error("Steps must be at least as large as “save every”.");
+  if (n > WEB_LIMITS.bodies) throw new Error(`The browser engine handles up to ${WEB_LIMITS.bodies.toLocaleString()} bodies (this scenario has ${n.toLocaleString()}).`);
+  if (n * frames * 12 > WEB_LIMITS.bytes) throw new Error("The result would be too big for the browser. Raise “save every” or lower steps / bodies.");
+
+  setStatus(`<span class="spinner"></span>Preparing ${n.toLocaleString()} bodies…`);
+  await new Promise((r) => setTimeout(r, 20));
+  const init = buildBodies(sc);
+
+  const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
+  if (!adapter) throw new Error("WebGPU is not available.");
+  const device = await adapter.requestDevice();
+  let lost = null;
+  device.lost.then((info) => { lost = info; });
+
+  try {
+    const bytes = n * 16;
+    const usage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST;
+    const posA = device.createBuffer({ size: bytes, usage });
+    const posB = device.createBuffer({ size: bytes, usage });
+    const velBuf = device.createBuffer({ size: bytes, usage });
+    const params = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    device.queue.writeBuffer(posA, 0, init.pos);
+    device.queue.writeBuffer(velBuf, 0, init.vel);
+    const pbuf = new ArrayBuffer(16);
+    new Uint32Array(pbuf, 0, 1)[0] = n;
+    new Float32Array(pbuf, 4, 3).set([dt, 0.0025, 0]);
+    device.queue.writeBuffer(params, 0, pbuf);
+
+    const module = device.createShaderModule({ code: WGSL });
+    const pipeline = await device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "step" } });
+    const bind = (src, dst) => device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: { buffer: params } }, { binding: 1, resource: { buffer: src } },
+      { binding: 2, resource: { buffer: velBuf } }, { binding: 3, resource: { buffer: dst } }] });
+    const bindAB = bind(posA, posB), bindBA = bind(posB, posA);
+    const workgroups = Math.ceil(n / WG);
+
+    const out = new Float32Array(frames * n * 3);
+    const maxBuf = Math.min(device.limits.maxBufferSize, 256 * 1024 * 1024);
+    const chunkFrames = Math.max(1, Math.min(frames, Math.floor(maxBuf / bytes)));
+    let cur = 0;    // 0: newest positions are in posA
+    $("btnStop").hidden = false;
+    setProgress(0);
+    const t0 = performance.now();
+
+    for (let f0 = 0; f0 < frames; f0 += chunkFrames) {
+      const cf = Math.min(chunkFrames, frames - f0);
+      const readback = device.createBuffer({ size: cf * bytes, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+      for (let f = 0; f < cf; f++) {
+        const enc = device.createCommandEncoder();
+        const pass = enc.beginComputePass();
+        pass.setPipeline(pipeline);
+        for (let s = 0; s < saveEvery; s++) {
+          pass.setBindGroup(0, cur === 0 ? bindAB : bindBA);
+          pass.dispatchWorkgroups(workgroups);
+          cur ^= 1;
+        }
+        pass.end();
+        enc.copyBufferToBuffer(cur === 0 ? posA : posB, 0, readback, f * bytes, bytes);
+        device.queue.submit([enc.finish()]);
+        // Wait now and then so the page stays responsive and the bar moves.
+        if (f % 4 === 3 || f === cf - 1) {
+          await device.queue.onSubmittedWorkDone();
+          if (lost) throw new Error("The graphics card stopped the simulation (" + (lost.message || "device lost") + "). Try fewer bodies.");
+          const done = (f0 + f + 1) / frames;
+          setProgress(done);
+          const el = (performance.now() - t0) / 1000;
+          setStatus(`<span class="spinner"></span>Simulating on the GPU (WebGPU)… ${Math.round(done * 100)}%` +
+            (done > 0.05 ? ` · about ${Math.max(0, Math.round(el / done - el))} s left` : ""));
+          if (stopRequested) break;
+        }
+      }
+      await readback.mapAsync(GPUMapMode.READ);
+      const src = new Float32Array(readback.getMappedRange());
+      const framesDone = stopRequested ? Math.min(cf, src.length / (4 * n)) : cf;
+      for (let f = 0; f < framesDone; f++) {
+        const so = f * n * 4, dO = (f0 + f) * n * 3;
+        for (let i = 0; i < n; i++) {
+          out[dO + 3 * i] = src[so + 4 * i];
+          out[dO + 3 * i + 1] = src[so + 4 * i + 1];
+          out[dO + 3 * i + 2] = src[so + 4 * i + 2];
+        }
+      }
+      readback.unmap();
+      readback.destroy();
+      if (stopRequested) {
+        setStatus("Stopped.", "err");
+        return null;
+      }
+    }
+    const sec = (performance.now() - t0) / 1000;
+
+    const types = new Int32Array(sc.objects.map((o) => ["galaxy", "cluster", "body"].indexOf(o.type)));
+    const s = makeSim({ name, n, frames, numObjects: sc.objects.length, view: sc.settings.view,
+                        frameTime: dt * saveEvery, types, group: init.group, pos: out });
+    $("runLog").textContent = `Engine: WebGPU${caps.webgpuInfo ? " (" + caps.webgpuInfo + ")" : ""}\n` +
+      `Bodies: ${n.toLocaleString()}\nSteps: ${steps.toLocaleString()} (dt = ${dt})\nFrames: ${frames}\n` +
+      `Time: ${sec.toFixed(2)} s (${(sec * 1000 / steps).toFixed(3)} ms per step)\n` +
+      `Speed: ${(n * n * steps / sec / 1e9).toFixed(1)} billion interactions per second`;
+    $("logBox").hidden = false;
+    setStatus(`Done in ${sec.toFixed(1)} s (WebGPU). Playing in the Watch tab.`, "ok");
+    return s;
+  } finally {
+    device.destroy();
+  }
+}
+
+// Turn the current simulation into a .frames file (same format as nbody.exe writes).
+function framesFileBlob(s) {
+  const header = new ArrayBuffer(4 + 12 + 8);
+  const dv = new DataView(header);
+  "NBF2".split("").forEach((ch, k) => dv.setUint8(k, ch.charCodeAt(0)));
+  dv.setInt32(4, s.n, true); dv.setInt32(8, s.frames, true); dv.setInt32(12, s.numObjects, true);
+  dv.setFloat32(16, s.view, true); dv.setFloat32(20, s.frameTime, true);
+  return new Blob([header, s.types, s.group, s.pos.subarray(0, s.frames * s.n * 3)], { type: "application/octet-stream" });
+}
+$("btnDownload").onclick = () => {
+  if (sim) downloadBlob(framesFileBlob(sim), sim.name.replace(/\.frames$/i, "").replace(/[^\w\-]+/g, "_") + ".frames");
 };
 
 // ===========================================================================
@@ -894,14 +1206,18 @@ function parseFrames(buffer, name) {
   const frames = Math.min(framesInHeader, available);
   if (n <= 0 || frames <= 0) throw new Error("The file contains no frames.");
   const pos = new Float32Array(buffer, off, frames * floatsPerFrame);
+  return makeSim({ name, n, frames, numObjects, view, frameTime, types, group, pos });
+}
+
+// Add the lookup tables the player needs (bodies grouped by colour, heavy bodies).
+function makeSim(s) {
   const byGroup = [];
-  for (let g = 0; g < numObjects; g++) byGroup.push([]);
+  for (let g = 0; g < s.numObjects; g++) byGroup.push([]);
   const heavy = [];
-  for (let i = 0; i < n; i++) {
-    if (types[group[i]] === BODY) heavy.push(i); else byGroup[group[i]].push(i);
+  for (let i = 0; i < s.n; i++) {
+    if (s.types[s.group[i]] === BODY) heavy.push(i); else byGroup[s.group[i]].push(i);
   }
-  return { name, n, frames, numObjects, view, frameTime, types, group, pos,
-           byGroup: byGroup.map((a) => Int32Array.from(a)), heavy };
+  return { ...s, byGroup: byGroup.map((a) => Int32Array.from(a)), heavy };
 }
 
 function loadFile(file) {
@@ -919,7 +1235,7 @@ function onLoaded() {
   $("drop").classList.add("hidden");
   t = 0;
   resetCamera();
-  for (const id of ["btnStart", "btnBack", "btnPlay", "btnFwd", "btnEnd", "timeline"]) $(id).disabled = false;
+  for (const id of ["btnStart", "btnBack", "btnPlay", "btnFwd", "btnEnd", "timeline", "btnDownload"]) $(id).disabled = false;
   $("timeline").max = sim.frames - 1;
   playing = true;
   $("btnPlay").textContent = "⏸ Pause";
@@ -1164,7 +1480,7 @@ galaxy  count=4096  x=-3  y=-1  vx=0.3   spin=1
 galaxy  count=4096  x=3   y=1   vx=-0.3  spin=-1
 `, "my_scenario");
 setMode("build");
-checkServer();
+detectEngines();
 requestAnimationFrame(tick);
 </script>
 </body>

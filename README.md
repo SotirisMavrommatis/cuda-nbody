@@ -4,6 +4,12 @@ A gravitational N-body simulation written in CUDA C++. Every body attracts every
 other body, so one simulation step costs **N² interactions**. That is a workload a GPU
 handles very well, and this project measures how well.
 
+### ▶ [Try it in your browser](https://sotirismavrommatis.github.io/cuda-nbody/)
+
+There is nothing to install. Place galaxies and black holes with the mouse, press **Run**, and
+the simulation runs on *your* graphics card through WebGPU. It works with any recent GPU
+(NVIDIA, AMD, Intel or Apple) in a recent Chrome or Edge.
+
 ![Two galaxies colliding, 8192 bodies](galaxy_collision.gif)
 
 *Two rotating disk galaxies (8,192 bodies) pass through each other. Tidal forces pull out
@@ -31,6 +37,20 @@ Double-click **`start_studio.bat`**. It opens a small app in your browser with t
   length. Every change also appears as scenario text, and editing the text updates the map.
 - **Run** simulates the scene on the GPU, and the result opens straight away in the
   **Watch** tab, the interactive player described below.
+
+There are two engines that run the same physics. The scene setup is the same in both,
+but each engine uses its own random numbers to place the stars:
+
+| Engine | Where | Needs |
+|---|---|---|
+| **WebGPU** | In the browser, ported to a WGSL compute shader with the same tiled algorithm | Any recent GPU and browser. It also works in the [online version](https://sotirismavrommatis.github.io/cuda-nbody/). |
+| **CUDA** | `nbody.exe`, run for the browser by `server.py` | An NVIDIA GPU and the CUDA Toolkit. Start it with `start_studio.bat`. |
+
+The WebGPU kernel was checked against a double-precision CPU reference. After 60 steps
+the positions agree to within 4·10⁻⁶. On the test laptop, the galaxy collision (8,192
+bodies, 1,500 steps) takes **0.33 s with CUDA on the RTX 5070** and 12 s with WebGPU, because
+the browser picked the laptop's integrated AMD graphics. Laptops with two GPUs often do
+this. You can fix it in Windows under *Settings → System → Display → Graphics*.
 
 ![The studio's Build tab](docs/studio_build.png)
 
@@ -141,7 +161,7 @@ python render.py galaxies.frames galaxies.gif galaxies  # make a GIF (optional)
 | File | Purpose |
 |---|---|
 | `nbody.cu` | Simulation, CUDA kernels, scenario loader, verification and benchmark |
-| `viewer.html` | The studio: scenario builder (Build tab) and interactive player (Watch tab) |
+| `viewer.html` | The studio: scenario builder (Build tab), WebGPU engine and interactive player (Watch tab). This is also the online version. |
 | `server.py` | Local server that lets the studio run `nbody.exe`. Used by `start_studio.bat`. |
 | `render.py` | Turns a `.frames` file into a GIF and a still `.png`, one colour per object |
 | `scenarios/` | Example scenarios and the format guide |
