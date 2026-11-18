@@ -21,7 +21,24 @@ The program checks itself before it benchmarks anything. It runs the same simula
 the CPU and on both GPU kernels and compares the positions. Both kernels match the CPU
 to within `2.4e-07`.
 
-## Make your own collisions
+## The studio: design a collision and watch it
+
+Double-click **`start_studio.bat`**. It opens a small app in your browser with two tabs:
+
+- **Build**: place galaxies, star clusters and black holes on a map with the mouse. Drag an
+  object to move it, and drag the tip of its arrow to set its velocity. A side panel lets you
+  edit everything else (number of stars, mass, size, spin, tilt), along with the simulation
+  length. Every change also appears as scenario text, and editing the text updates the map.
+- **Run** simulates the scene on the GPU, and the result opens straight away in the
+  **Watch** tab, the interactive player described below.
+
+![The studio's Build tab](docs/studio_build.png)
+
+Behind the scenes, `server.py` (Python standard library only) runs `nbody.exe` for the
+browser. It only listens on `127.0.0.1`, so it can't be reached from other computers. It
+refuses runs that are too large (more than 131,072 bodies, or a result over 1.5 GB).
+
+## Make your own collisions (text files)
 
 What collides with what is not hard-coded. Each simulation is described by a small text
 file in [`scenarios/`](scenarios/). You can mix **galaxies**, **star clusters** and single
@@ -50,8 +67,9 @@ centre flies past and tears out long tidal arms.
 
 ## Watch it interactively
 
-Open **`viewer.html`** in any browser. It needs no installation and works offline. Drop in a
-`.frames` file from the `output` folder and you get:
+The **Watch** tab plays a simulation. It opens automatically after **Run** in the studio. You can
+also open `viewer.html` directly in any browser, with no installation and no internet needed,
+and drop in a `.frames` file from the `output` folder. You get:
 
 - **Play / pause, rewind, step frame by frame**, and a timeline slider to jump to any moment
 - **Playback speed** from 0.1× slow motion to 4×, including reverse
@@ -101,6 +119,7 @@ and, on Windows, Visual Studio with the *Desktop development with C++* workload.
 Rendering the GIF needs Python with `numpy`, `matplotlib` and `pillow`.
 
 **Windows (easy way):**
+- `start_studio.bat`: the studio. Build scenarios with the mouse, run them and watch them in the browser.
 - `simulate.bat`: drag a scenario `.txt` onto it, or double-click it to run `scenarios/galaxies.txt`
 - `run_all.bat`: runs every scenario and makes a GIF for each
 - `benchmark.bat`: CPU vs GPU verification plus the benchmark table above
@@ -122,10 +141,11 @@ python render.py galaxies.frames galaxies.gif galaxies  # make a GIF (optional)
 | File | Purpose |
 |---|---|
 | `nbody.cu` | Simulation, CUDA kernels, scenario loader, verification and benchmark |
-| `viewer.html` | Interactive player: timeline, play/pause, speed, 3D rotation, zoom |
+| `viewer.html` | The studio: scenario builder (Build tab) and interactive player (Watch tab) |
+| `server.py` | Local server that lets the studio run `nbody.exe`. Used by `start_studio.bat`. |
 | `render.py` | Turns a `.frames` file into a GIF and a still `.png`, one colour per object |
 | `scenarios/` | Example scenarios and the format guide |
-| `simulate.bat`, `run_all.bat`, `benchmark.bat` | One-click scripts for Windows (`_build.bat` is a shared helper) |
+| `start_studio.bat`, `simulate.bat`, `run_all.bat`, `benchmark.bat` | One-click scripts for Windows (`_build.bat` is a shared helper) |
 
 ## Ideas for next steps
 

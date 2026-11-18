@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>N-body viewer</title>
+<title>N-body studio</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Ccircle cx=%228%22 cy=%228%22 r=%225%22 fill=%22%2373bfff%22/%3E%3C/svg%3E">
 <style>
   :root {
     --bg: #05060a;
@@ -13,23 +14,33 @@
     --muted: #8a93a8;
     --accent: #73bfff;
     --border: #262b3a;
+    --bad: #ff8a8a;
+    --good: #8cf0a0;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
     font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
   #app { display: grid; grid-template-rows: auto 1fr auto; height: 100%; }
 
-  header { display: flex; align-items: center; gap: 16px; padding: 10px 16px;
+  header { display: flex; align-items: center; gap: 14px; padding: 8px 16px;
     background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
   header h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .2px; }
+  .tabs { display: flex; gap: 4px; background: var(--bg); padding: 3px; border-radius: 10px; border: 1px solid var(--border); }
+  .tab { background: transparent; border: 0; color: var(--muted); padding: 5px 14px; border-radius: 7px; cursor: pointer; font: inherit; }
+  .tab.active { background: var(--panel-2); color: var(--text); }
   #info { color: var(--muted); font-variant-numeric: tabular-nums; }
   #legend { display: flex; gap: 12px; flex-wrap: wrap; margin-left: auto; }
   .chip { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; }
-  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none; }
 
-  #stage { position: relative; overflow: hidden; }
-  canvas { display: block; width: 100%; height: 100%; cursor: grab; }
-  canvas.dragging { cursor: grabbing; }
+  main { position: relative; overflow: hidden; min-height: 0; }
+  .view { position: absolute; inset: 0; display: none; }
+  body.mode-watch #watchView { display: block; }
+  body.mode-build #buildView { display: grid; grid-template-columns: 1fr 370px; }
+  body.mode-build footer { display: none; }
+  canvas { display: block; width: 100%; height: 100%; }
+  #watchCanvas { cursor: grab; }
+  #watchCanvas.dragging { cursor: grabbing; }
 
   #drop { position: absolute; inset: 24px; border: 2px dashed var(--border); border-radius: 16px;
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
@@ -37,48 +48,147 @@
   #drop.hover { border-color: var(--accent); color: var(--text); }
   #drop.hidden { display: none; }
   #drop strong { color: var(--text); font-size: 18px; }
-  #drop code { color: var(--accent); }
+  #drop code, .note code { color: var(--accent); }
 
-  #hint { position: absolute; right: 12px; bottom: 10px; color: var(--muted); font-size: 12px;
-    background: rgba(16,19,28,.75); padding: 6px 10px; border-radius: 8px; pointer-events: none; }
-  #error { position: absolute; left: 50%; top: 16px; transform: translateX(-50%);
-    background: #3a1418; color: #ffb4b4; padding: 8px 14px; border-radius: 8px; display: none; }
+  .hint { position: absolute; right: 12px; bottom: 10px; color: var(--muted); font-size: 12px;
+    background: rgba(16,19,28,.8); padding: 6px 10px; border-radius: 8px; pointer-events: none; }
+  #error { position: absolute; left: 50%; top: 16px; transform: translateX(-50%); z-index: 5;
+    background: #3a1418; color: #ffb4b4; padding: 8px 14px; border-radius: 8px; display: none; max-width: 80%; }
 
-  footer { background: var(--panel); border-top: 1px solid var(--border); padding: 10px 16px;
-    display: grid; gap: 8px; }
+  footer { background: var(--panel); border-top: 1px solid var(--border); padding: 10px 16px; display: grid; gap: 8px; }
   .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   button, select, label.btn { background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
     border-radius: 8px; padding: 6px 10px; font: inherit; cursor: pointer; min-width: 38px;
     display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
   button:hover, select:hover, label.btn:hover { border-color: #3a4256; }
   button:disabled { opacity: .4; cursor: default; }
-  button.primary { background: var(--accent); color: #06121f; border-color: var(--accent);
-    font-weight: 600; min-width: 84px; }
+  button.primary { background: var(--accent); color: #06121f; border-color: var(--accent); font-weight: 600; min-width: 84px; }
   button.on { border-color: var(--accent); color: var(--accent); }
+  button.danger { color: var(--bad); }
   #timeline { flex: 1; min-width: 200px; accent-color: var(--accent); height: 24px; }
   #time { font-variant-numeric: tabular-nums; color: var(--muted); min-width: 210px; text-align: right; }
   .sep { width: 1px; height: 22px; background: var(--border); }
   input[type=file] { display: none; }
+
+  /* ---- Build view ---- */
+  #buildStage { position: relative; min-width: 0; }
+  #buildCanvas { cursor: default; }
+  #buildCanvas.placing { cursor: crosshair; }
+  #buildCanvas.move { cursor: move; }
+  #buildCanvas.grab { cursor: grabbing; }
+  #placingBanner { position: absolute; left: 50%; top: 12px; transform: translateX(-50%);
+    background: var(--accent); color: #06121f; padding: 6px 14px; border-radius: 8px; font-weight: 600; display: none; }
+  aside { background: var(--panel); border-left: 1px solid var(--border); overflow-y: auto; padding: 12px 14px 20px; }
+  aside h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted);
+    margin: 18px 0 8px; font-weight: 600; }
+  aside h2:first-child { margin-top: 4px; }
+  .addrow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .addrow button { flex-direction: column; gap: 2px; padding: 8px 4px; font-size: 13px; }
+  .addrow .dot { width: 12px; height: 12px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; }
+  .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px 8px; }
+  .field { display: flex; flex-direction: column; gap: 2px; }
+  .field span { color: var(--muted); font-size: 12px; }
+  .field input, .field select { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 5px 7px; font: inherit; font-variant-numeric: tabular-nums; }
+  .field input:focus, textarea:focus { outline: none; border-color: var(--accent); }
+  .objhead { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .objhead strong { flex: 1; }
+  .muted { color: var(--muted); font-size: 13px; }
+  textarea { width: 100%; height: 190px; resize: vertical; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px; padding: 8px; font: 12.5px/1.45 ui-monospace, Consolas, monospace; white-space: pre; }
+  textarea.invalid { border-color: var(--bad); }
+  #textErrors { color: var(--bad); font-size: 12.5px; white-space: pre-wrap; margin-top: 4px; }
+  #stats { font-size: 13px; color: var(--muted); line-height: 1.6; }
+  #stats b { color: var(--text); font-weight: 600; }
+  #stats .warn { color: #ffcf73; }
+  .runrow { display: flex; gap: 6px; margin-top: 8px; }
+  .runrow button.primary { flex: 1; padding: 9px; font-size: 15px; }
+  #runStatus { margin-top: 8px; font-size: 13px; min-height: 18px; }
+  #runStatus.err { color: var(--bad); }
+  #runStatus.ok { color: var(--good); }
+  details { margin-top: 6px; }
+  details pre { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px;
+    font-size: 11.5px; max-height: 200px; overflow: auto; white-space: pre-wrap; }
+  .note { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+    font-size: 12.5px; color: var(--muted); margin-top: 8px; }
+  .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent;
+    border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -2px; margin-right: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
 </style>
 </head>
-<body>
+<body class="mode-build">
 <div id="app">
   <header>
-    <h1>N-body viewer</h1>
-    <span id="info">No simulation loaded</span>
+    <h1>N-body studio</h1>
+    <div class="tabs">
+      <button class="tab active" id="tabBuild" title="Design a scenario">✎ Build</button>
+      <button class="tab" id="tabWatch" title="Play a simulation">▶ Watch</button>
+    </div>
+    <span id="info"></span>
     <div id="legend"></div>
   </header>
 
-  <div id="stage">
-    <canvas id="canvas"></canvas>
-    <div id="drop">
-      <strong>Drop a <code>.frames</code> file here</strong>
-      <span>Made by <code>simulate.bat</code>, saved in the <code>output</code> folder</span>
-      <label class="btn" for="file">Choose file…</label>
-    </div>
-    <div id="hint">Drag: rotate (3D) / move (2D) · Shift+drag: move · Wheel: zoom · Space: play/pause · ←/→: step</div>
+  <main>
+    <!-- ======================= BUILD ======================= -->
+    <section id="buildView" class="view">
+      <div id="buildStage">
+        <canvas id="buildCanvas"></canvas>
+        <div id="placingBanner">Click on the map to place it · Esc to cancel</div>
+        <div class="hint">Drag an object to move it · drag the arrow tip to set its velocity · wheel: zoom · drag empty space: move map · Del: delete</div>
+      </div>
+      <aside>
+        <h2>Add</h2>
+        <div class="addrow">
+          <button id="addGalaxy" title="Spiral galaxy: heavy centre + disk of stars"><span class="dot" style="background:#73bfff"></span>Galaxy</button>
+          <button id="addCluster" title="Round cluster of stars"><span class="dot" style="background:#ffa64d"></span>Star cluster</button>
+          <button id="addBody" title="A single heavy object"><span class="dot" style="background:#fff"></span>Black hole</button>
+        </div>
+
+        <h2>Selected object</h2>
+        <div id="props"><div class="muted">Click an object on the map to edit it.</div></div>
+
+        <h2>Simulation</h2>
+        <div class="grid2">
+          <label class="field"><span>Steps</span><input id="setSteps" type="number" min="1" step="100"></label>
+          <label class="field"><span>Time step (dt)</span><input id="setDt" type="number" min="0.0001" step="0.001"></label>
+          <label class="field"><span>Save every N steps</span><input id="setSave" type="number" min="1" step="1"></label>
+          <label class="field"><span>View size</span><input id="setView" type="number" min="0.5" step="0.5"></label>
+        </div>
+        <div id="stats" style="margin-top:10px"></div>
+
+        <h2>Scenario text</h2>
+        <textarea id="scenarioText" spellcheck="false"></textarea>
+        <div id="textErrors"></div>
+
+        <h2>Run</h2>
+        <div class="grid2">
+          <label class="field"><span>Name</span><input id="scenName" type="text" value="my_scenario"></label>
+          <label class="field"><span>Start from an example</span><select id="examples"><option value="">—</option></select></label>
+        </div>
+        <div class="runrow">
+          <button id="btnRun" class="primary" title="Run on the GPU and play it">▶ Run simulation</button>
+          <button id="btnSave" title="Save the scenario as a .txt file">Save</button>
+          <button id="btnClear" class="danger" title="Remove all objects">Clear</button>
+        </div>
+        <div id="runStatus"></div>
+        <details id="logBox" hidden><summary class="muted">Simulation log</summary><pre id="runLog"></pre></details>
+        <div id="serverNote" class="note" hidden></div>
+      </aside>
+    </section>
+
+    <!-- ======================= WATCH ======================= -->
+    <section id="watchView" class="view">
+      <canvas id="watchCanvas"></canvas>
+      <div id="drop">
+        <strong>Drop a <code>.frames</code> file here</strong>
+        <span>…or design a scenario in the <b>Build</b> tab and press <b>Run</b></span>
+        <label class="btn" for="file">Choose file…</label>
+      </div>
+      <div class="hint">Drag: rotate (3D) / move (2D) · Shift+drag: move · Wheel: zoom · Space: play/pause · ←/→: step</div>
+    </section>
     <div id="error"></div>
-  </div>
+  </main>
 
   <footer>
     <div class="row">
@@ -108,7 +218,7 @@
       <button id="btnTrails" title="Leave fading trails behind moving bodies">Trails</button>
       <button id="btnReset" title="Reset camera">Reset camera</button>
       <span class="sep"></span>
-      <label class="btn" for="file" title="Open another .frames file">Open…</label>
+      <label class="btn" for="file" title="Open a .frames file">Open…</label>
       <input id="file" type="file" accept=".frames">
     </div>
   </footer>
@@ -116,23 +226,646 @@
 
 <script>
 "use strict";
+const $ = (id) => document.getElementById(id);
 
-// ---------------------------------------------------------------------------
-// Colours: same palette as render.py. Heavy single bodies are drawn white.
-// ---------------------------------------------------------------------------
+// ===========================================================================
+// Shared
+// ===========================================================================
+// Same colours as render.py: object k gets PALETTE[k]; single heavy bodies are white.
 const PALETTE = [
   [115, 191, 255], [255, 166, 77], [140, 255, 140], [255, 115, 179],
   [204, 153, 255], [255, 242, 115], [102, 255, 242], [255, 140, 128],
 ];
 const TYPE_NAMES = ["galaxy", "cluster", "body"];
 const BODY = 2;
-const BASE_FPS = 30;          // at 1× speed, 30 saved frames are shown per second
+const rgb = (c, a = 1) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+const colorOf = (type, k) => type === "body" ? [255, 255, 255] : PALETTE[k % PALETTE.length];
 
-// ---------------------------------------------------------------------------
-// State
-// ---------------------------------------------------------------------------
-let sim = null;               // loaded simulation
-let t = 0;                    // current position on the timeline, in frames (fractional)
+let mode = "build";
+function setMode(m) {
+  mode = m;
+  document.body.className = "mode-" + m;
+  $("tabBuild").classList.toggle("active", m === "build");
+  $("tabWatch").classList.toggle("active", m === "watch");
+  if (m === "watch") { setPlaying(playing); updateHeaderForWatch(); }
+  else { setPlaying(false); updateHeaderForBuild(); }
+  resizeAll();
+}
+$("tabBuild").onclick = () => setMode("build");
+$("tabWatch").onclick = () => setMode("watch");
+
+function showError(msg) { const el = $("error"); el.textContent = msg; el.style.display = "block";
+  clearTimeout(showError.t); showError.t = setTimeout(hideError, 6000); }
+function hideError() { $("error").style.display = "none"; }
+
+// ===========================================================================
+// SCENARIO MODEL, PARSER AND WRITER  (same rules as the parser in nbody.cu)
+// ===========================================================================
+const SETTINGS_DEFAULTS = { steps: 1500, dt: 0.01, save_every: 6, view: 5, seed: 42 };
+const OBJ_DEFAULTS = {
+  galaxy:  { count: 4096, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, mass: 1, disk_mass: 0.1, radius: 1.2, inner: 0.2, spin: 1, tilt: 0 },
+  cluster: { count: 2048, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, mass: 1, radius: 0.3 },
+  body:    { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, mass: 1 },
+};
+const KEY_ORDER = ["count", "x", "y", "z", "vx", "vy", "vz", "mass", "disk_mass", "radius", "inner", "spin", "tilt"];
+const ALWAYS_WRITE = ["count", "x", "y"];
+
+let scenario = { settings: { ...SETTINGS_DEFAULTS }, objects: [] };
+
+function newObject(type, extra = {}) {
+  return { type, ...OBJ_DEFAULTS[type], ...extra };
+}
+
+function fmt(v) {
+  const r = Math.round(v * 10000) / 10000;
+  return String(Object.is(r, -0) ? 0 : r);
+}
+
+function scenarioToText(sc) {
+  const lines = ["# Made with the N-body studio", ""];
+  const s = sc.settings;
+  lines.push(`steps = ${fmt(s.steps)}`, `dt = ${fmt(s.dt)}`, `save_every = ${fmt(s.save_every)}`, `view = ${fmt(s.view)}`);
+  if (s.seed !== SETTINGS_DEFAULTS.seed) lines.push(`seed = ${fmt(s.seed)}`);
+  lines.push("");
+  for (const o of sc.objects) {
+    const d = OBJ_DEFAULTS[o.type];
+    const parts = [o.type.padEnd(7)];
+    for (const k of KEY_ORDER) {
+      if (!(k in d)) continue;
+      if (!ALWAYS_WRITE.includes(k) && o[k] === d[k]) continue;
+      parts.push(`${k}=${fmt(o[k])}`);
+    }
+    lines.push(parts.join("  "));
+  }
+  return lines.join("\n") + "\n";
+}
+
+function parseScenario(text) {
+  const sc = { settings: { ...SETTINGS_DEFAULTS }, objects: [] };
+  const errors = [];
+  text.split(/\r?\n/).forEach((raw, idx) => {
+    const lineNo = idx + 1;
+    const line = raw.split("#")[0].replace(/\s*=\s*/g, "=").trim();
+    if (!line) return;
+    const tok = line.split(/\s+/);
+    const first = tok[0];
+    if (first in OBJ_DEFAULTS) {
+      const o = newObject(first);
+      for (const t of tok.slice(1)) {
+        const eq = t.indexOf("=");
+        if (eq < 0) { errors.push(`line ${lineNo}: expected key=value, got '${t}'`); continue; }
+        const key = t.slice(0, eq), val = parseFloat(t.slice(eq + 1));
+        if (!(key in OBJ_DEFAULTS[first])) { errors.push(`line ${lineNo}: unknown setting '${key}' for ${first}`); continue; }
+        if (!isFinite(val)) { errors.push(`line ${lineNo}: '${t}' is not a number`); continue; }
+        o[key] = key === "count" ? Math.trunc(val) : val;
+      }
+      if (first !== "body" && o.count < 2) errors.push(`line ${lineNo}: count must be at least 2`);
+      sc.objects.push(o);
+    } else {
+      for (const t of tok) {
+        const eq = t.indexOf("=");
+        if (eq < 0) { errors.push(`line ${lineNo}: unknown line '${line}'`); break; }
+        const key = t.slice(0, eq), val = parseFloat(t.slice(eq + 1));
+        if (!(key in SETTINGS_DEFAULTS)) { errors.push(`line ${lineNo}: unknown setting '${key}'`); continue; }
+        if (!isFinite(val)) { errors.push(`line ${lineNo}: '${t}' is not a number`); continue; }
+        sc.settings[key] = val;
+      }
+    }
+  });
+  if (!sc.objects.length) errors.push("the scenario has no objects");
+  return { sc, errors };
+}
+
+function totalBodies(sc) {
+  return sc.objects.reduce((n, o) => n + (o.type === "body" ? 1 : Math.max(0, o.count)), 0);
+}
+
+// ===========================================================================
+// BUILD VIEW
+// ===========================================================================
+const bcv = $("buildCanvas"), bctx = bcv.getContext("2d");
+const bcam = { zoom: 1, panX: 0, panY: 0 };
+const ARROW_T = 3;          // a velocity arrow shows where the object would be after 3 time units
+let selected = -1;
+let placing = null;         // type being placed, or null
+let bdrag = null;
+let textHasErrors = false;
+
+function bScale() {
+  const v = scenario.settings.view > 0 ? scenario.settings.view : 5;
+  return (Math.min(bcv.width, bcv.height) / 2) / (v * 1.3) * bcam.zoom;
+}
+function w2s(x, y) {
+  const s = bScale();
+  return [bcv.width / 2 + (x + bcam.panX) * s, bcv.height / 2 - (y + bcam.panY) * s];
+}
+function s2w(px, py) {
+  const s = bScale();
+  return [(px - bcv.width / 2) / s - bcam.panX, -(py - bcv.height / 2) / s - bcam.panY];
+}
+const dpr = () => window.devicePixelRatio || 1;
+const round = (v, step) => Math.round(v / step) * step;
+
+function drawBuild() {
+  const W = bcv.width, H = bcv.height, s = bScale(), D = dpr();
+  bctx.fillStyle = "#05060a";
+  bctx.fillRect(0, 0, W, H);
+
+  // Grid every 1 unit, axes brighter.
+  const [x0, y1] = s2w(0, 0), [x1, y0] = s2w(W, H);
+  const step = s < 25 * D ? 5 : 1;
+  bctx.lineWidth = 1;
+  for (let gx = Math.ceil(x0 / step) * step; gx <= x1; gx += step) {
+    const [px] = w2s(gx, 0);
+    bctx.strokeStyle = gx === 0 ? "#2b3348" : "#141826";
+    bctx.beginPath(); bctx.moveTo(px, 0); bctx.lineTo(px, H); bctx.stroke();
+  }
+  for (let gy = Math.ceil(y0 / step) * step; gy <= y1; gy += step) {
+    const [, py] = w2s(0, gy);
+    bctx.strokeStyle = gy === 0 ? "#2b3348" : "#141826";
+    bctx.beginPath(); bctx.moveTo(0, py); bctx.lineTo(W, py); bctx.stroke();
+  }
+
+  // The area the result will show (view).
+  const v = scenario.settings.view;
+  const [ax, ay] = w2s(-v, v), [bx, by] = w2s(v, -v);
+  bctx.setLineDash([6 * D, 6 * D]);
+  bctx.strokeStyle = "#3a4256";
+  bctx.strokeRect(ax, ay, bx - ax, by - ay);
+  bctx.setLineDash([]);
+  bctx.fillStyle = "#3a4256";
+  bctx.font = `${11 * D}px system-ui, sans-serif`;
+  bctx.fillText("visible area", ax + 6 * D, ay + 14 * D);
+
+  scenario.objects.forEach((o, k) => drawObject(o, k, k === selected));
+}
+
+function drawObject(o, k, isSel) {
+  const s = bScale(), D = dpr();
+  const c = colorOf(o.type, k);
+  const [px, py] = w2s(o.x, o.y);
+
+  if (o.type === "galaxy") {
+    const ry = Math.max(0.08, Math.abs(Math.cos(o.tilt * Math.PI / 180)));
+    const R = o.radius * s, r = o.inner * s;
+    bctx.save();
+    bctx.translate(px, py);
+    bctx.scale(1, ry);
+    const g = bctx.createRadialGradient(0, 0, r * 0.5, 0, 0, R);
+    g.addColorStop(0, rgb(c, 0.35)); g.addColorStop(1, rgb(c, 0.05));
+    bctx.fillStyle = g;
+    bctx.beginPath(); bctx.arc(0, 0, R, 0, Math.PI * 2); bctx.fill();
+    bctx.lineWidth = (isSel ? 2.5 : 1.5) * D / ry;
+    bctx.strokeStyle = rgb(c, isSel ? 1 : 0.7);
+    bctx.beginPath(); bctx.arc(0, 0, R, 0, Math.PI * 2); bctx.stroke();
+    bctx.setLineDash([4 * D, 4 * D]);
+    bctx.strokeStyle = rgb(c, 0.4);
+    bctx.beginPath(); bctx.arc(0, 0, r, 0, Math.PI * 2); bctx.stroke();
+    bctx.setLineDash([]);
+    // Spin direction: curved arrow inside the disk.
+    const rr = R * 0.68, a0 = 0.3, a1 = 1.6;
+    const ccw = o.spin >= 0;
+    bctx.strokeStyle = rgb(c, 0.85);
+    bctx.lineWidth = 2 * D / ry;
+    bctx.beginPath();
+    // Canvas y points down, so counter-clockwise on screen = decreasing angle.
+    if (ccw) bctx.arc(0, 0, rr, -a0, -a1, true); else bctx.arc(0, 0, rr, -a1, -a0, false);
+    bctx.stroke();
+    const ang = ccw ? -a1 : -a0, tip = [Math.cos(ang) * rr, Math.sin(ang) * rr];
+    const dir = ccw ? [Math.sin(ang), -Math.cos(ang)] : [-Math.sin(ang), Math.cos(ang)];
+    const hl = 8 * D;
+    bctx.fillStyle = rgb(c, 0.85);
+    bctx.beginPath();
+    bctx.moveTo(tip[0] + dir[0] * hl, tip[1] + dir[1] * hl);
+    bctx.lineTo(tip[0] - dir[1] * hl * 0.6, tip[1] + dir[0] * hl * 0.6);
+    bctx.lineTo(tip[0] + dir[1] * hl * 0.6, tip[1] - dir[0] * hl * 0.6);
+    bctx.fill();
+    bctx.restore();
+    centerDot(px, py, [255, 255, 255], 4 * D);
+  } else if (o.type === "cluster") {
+    const R = Math.max(6 * D, o.radius * 2.2 * s);
+    const g = bctx.createRadialGradient(px, py, 0, px, py, R);
+    g.addColorStop(0, rgb(c, 0.8)); g.addColorStop(0.35, rgb(c, 0.35)); g.addColorStop(1, rgb(c, 0));
+    bctx.fillStyle = g;
+    bctx.beginPath(); bctx.arc(px, py, R, 0, Math.PI * 2); bctx.fill();
+    if (isSel) {
+      bctx.strokeStyle = rgb(c, 1); bctx.lineWidth = 2 * D;
+      bctx.beginPath(); bctx.arc(px, py, R, 0, Math.PI * 2); bctx.stroke();
+    }
+  } else {
+    const R = (8 + 4 * Math.sqrt(Math.max(o.mass, 0))) * D;
+    const g = bctx.createRadialGradient(px, py, 0, px, py, R);
+    g.addColorStop(0, "rgba(255,255,255,1)"); g.addColorStop(0.3, "rgba(255,255,255,.85)"); g.addColorStop(1, "rgba(255,255,255,0)");
+    bctx.fillStyle = g;
+    bctx.beginPath(); bctx.arc(px, py, R, 0, Math.PI * 2); bctx.fill();
+    if (isSel) {
+      bctx.strokeStyle = "#fff"; bctx.lineWidth = 2 * D;
+      bctx.beginPath(); bctx.arc(px, py, R + 3 * D, 0, Math.PI * 2); bctx.stroke();
+    }
+  }
+
+  // Velocity arrow.
+  const [ex, ey] = w2s(o.x + o.vx * ARROW_T, o.y + o.vy * ARROW_T);
+  const len = Math.hypot(ex - px, ey - py);
+  const ac = isSel ? [255, 255, 255] : [200, 210, 230];
+  if (len > 3 * D) {
+    bctx.strokeStyle = rgb(ac, isSel ? 1 : 0.7);
+    bctx.lineWidth = 2 * D;
+    bctx.beginPath(); bctx.moveTo(px, py); bctx.lineTo(ex, ey); bctx.stroke();
+    const ux = (ex - px) / len, uy = (ey - py) / len, h = 10 * D;
+    bctx.fillStyle = rgb(ac, isSel ? 1 : 0.7);
+    bctx.beginPath();
+    bctx.moveTo(ex, ey);
+    bctx.lineTo(ex - ux * h - uy * h * 0.5, ey - uy * h + ux * h * 0.5);
+    bctx.lineTo(ex - ux * h + uy * h * 0.5, ey - uy * h - ux * h * 0.5);
+    bctx.fill();
+  }
+  if (isSel) {
+    // Handle for dragging the velocity, even when it is zero.
+    bctx.strokeStyle = "#fff"; bctx.lineWidth = 1.5 * D;
+    bctx.fillStyle = "rgba(115,191,255,.35)";
+    bctx.beginPath(); bctx.arc(ex, ey, 7 * D, 0, Math.PI * 2); bctx.fill(); bctx.stroke();
+    const speed = Math.hypot(o.vx, o.vy, o.vz);
+    bctx.fillStyle = "#e8ecf4";
+    bctx.font = `${12 * D}px system-ui, sans-serif`;
+    bctx.fillText(`v = ${speed.toFixed(2)}`, ex + 10 * D, ey - 8 * D);
+  }
+}
+
+function centerDot(px, py, c, r) {
+  bctx.fillStyle = rgb(c, 1);
+  bctx.beginPath(); bctx.arc(px, py, r, 0, Math.PI * 2); bctx.fill();
+}
+
+// What is under the mouse? Arrow tips first, then centres, then shapes.
+function hitTest(px, py) {
+  const D = dpr(), s = bScale();
+  for (let k = scenario.objects.length - 1; k >= 0; k--) {
+    const o = scenario.objects[k];
+    const [ex, ey] = w2s(o.x + o.vx * ARROW_T, o.y + o.vy * ARROW_T);
+    const [cx, cy] = w2s(o.x, o.y);
+    const atTip = Math.hypot(px - ex, py - ey) < 10 * D;
+    const atCentre = Math.hypot(px - cx, py - cy) < 10 * D;
+    // A zero-velocity tip sits on the centre: prefer moving the object unless it is selected.
+    if (atTip && (k === selected || !atCentre)) return { k, part: "arrow" };
+  }
+  for (let k = scenario.objects.length - 1; k >= 0; k--) {
+    const o = scenario.objects[k];
+    const [cx, cy] = w2s(o.x, o.y);
+    if (Math.hypot(px - cx, py - cy) < 12 * D) return { k, part: "body" };
+  }
+  for (let k = scenario.objects.length - 1; k >= 0; k--) {
+    const o = scenario.objects[k];
+    const [cx, cy] = w2s(o.x, o.y);
+    let r = 14 * D;
+    if (o.type === "galaxy") r = o.radius * s;
+    if (o.type === "cluster") r = Math.max(10 * D, o.radius * 2 * s);
+    if (Math.hypot(px - cx, py - cy) < r) return { k, part: "body" };
+  }
+  return null;
+}
+
+function canvasPoint(e) {
+  const r = bcv.getBoundingClientRect(), D = dpr();
+  return [(e.clientX - r.left) * D, (e.clientY - r.top) * D];
+}
+
+bcv.addEventListener("pointerdown", (e) => {
+  const [px, py] = canvasPoint(e);
+  bcv.setPointerCapture(e.pointerId);
+  if (placing) {
+    const [wx, wy] = s2w(px, py);
+    const extra = { x: round(wx, 0.05), y: round(wy, 0.05) };
+    if (placing === "body") extra.mass = 2;
+    scenario.objects.push(newObject(placing, extra));
+    selected = scenario.objects.length - 1;
+    setPlacing(null);
+    onModelChanged();
+    return;
+  }
+  const hit = hitTest(px, py);
+  if (hit) {
+    selected = hit.k;
+    const o = scenario.objects[hit.k];
+    const [wx, wy] = s2w(px, py);
+    bdrag = { kind: hit.part, k: hit.k, offX: wx - o.x, offY: wy - o.y };
+    bcv.classList.add("grab");
+    renderProps();
+  } else {
+    selected = -1;
+    bdrag = { kind: "pan", lastX: px, lastY: py };
+    bcv.classList.add("grab");
+    renderProps();
+  }
+  drawBuild();
+});
+
+bcv.addEventListener("pointermove", (e) => {
+  const [px, py] = canvasPoint(e);
+  if (!bdrag) {
+    const hit = placing ? null : hitTest(px, py);
+    bcv.classList.toggle("move", !!hit);
+    return;
+  }
+  const [wx, wy] = s2w(px, py);
+  if (bdrag.kind === "pan") {
+    const s = bScale();
+    bcam.panX += (px - bdrag.lastX) / s;
+    bcam.panY -= (py - bdrag.lastY) / s;
+    bdrag.lastX = px; bdrag.lastY = py;
+    drawBuild();
+    return;
+  }
+  const o = scenario.objects[bdrag.k];
+  if (bdrag.kind === "body") {
+    o.x = round(wx - bdrag.offX, 0.05);
+    o.y = round(wy - bdrag.offY, 0.05);
+  } else {
+    o.vx = round((wx - o.x) / ARROW_T, 0.01);
+    o.vy = round((wy - o.y) / ARROW_T, 0.01);
+  }
+  onModelChanged({ keepPropsFocus: true });
+});
+
+function endDrag() { bdrag = null; bcv.classList.remove("grab"); }
+bcv.addEventListener("pointerup", endDrag);
+bcv.addEventListener("pointercancel", endDrag);
+
+bcv.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  const [px, py] = canvasPoint(e);
+  const [wx, wy] = s2w(px, py);
+  bcam.zoom = Math.max(0.15, Math.min(20, bcam.zoom * Math.exp(-e.deltaY * 0.0015)));
+  // keep the point under the cursor in place
+  const [nx, ny] = s2w(px, py);
+  bcam.panX += nx - wx; bcam.panY += ny - wy;
+  drawBuild();
+}, { passive: false });
+
+function setPlacing(type) {
+  placing = type;
+  bcv.classList.toggle("placing", !!type);
+  const names = { galaxy: "galaxy", cluster: "star cluster", body: "black hole" };
+  $("placingBanner").textContent = type ? `Click on the map to place the ${names[type]} · Esc to cancel` : "";
+  $("placingBanner").style.display = type ? "block" : "none";
+}
+$("addGalaxy").onclick = () => setPlacing("galaxy");
+$("addCluster").onclick = () => setPlacing("cluster");
+$("addBody").onclick = () => setPlacing("body");
+
+// ---- Properties panel ------------------------------------------------------
+const FIELD_INFO = {
+  count:     ["Bodies", 256, "Number of bodies in this object"],
+  x: ["x", 0.1], y: ["y", 0.1], z: ["z", 0.1],
+  vx: ["vx", 0.01], vy: ["vy", 0.01], vz: ["vz", 0.01],
+  mass:      ["Mass", 0.1],
+  disk_mass: ["Disk mass", 0.05, "Total mass of all the stars together"],
+  radius:    ["Radius", 0.1],
+  inner:     ["Inner radius", 0.05, "Empty area around the centre"],
+  tilt:      ["Tilt (°)", 5, "Tilt of the disk around the x axis"],
+};
+const TITLES = { galaxy: "Galaxy", cluster: "Star cluster", body: "Black hole / heavy body" };
+const MASS_LABEL = { galaxy: "Centre mass", cluster: "Total mass", body: "Mass" };
+const RADIUS_LABEL = { galaxy: "Disk radius", cluster: "Scale radius" };
+
+function renderProps() {
+  const box = $("props");
+  if (selected < 0 || selected >= scenario.objects.length) {
+    box.innerHTML = `<div class="muted">Click an object on the map to edit it.</div>`;
+    return;
+  }
+  const o = scenario.objects[selected];
+  const c = colorOf(o.type, selected);
+  const f = (key, label) => {
+    const info = FIELD_INFO[key];
+    return `<label class="field" title="${info[2] || ""}"><span>${label || info[0]}</span>
+      <input data-key="${key}" type="number" step="${info[1]}" value="${fmt(o[key])}"></label>`;
+  };
+  let html = `<div class="objhead"><span class="dot" style="background:${rgb(c)}"></span>
+    <strong>${TITLES[o.type]} ${selected + 1}</strong>
+    <button id="btnDup" title="Duplicate">Duplicate</button><button id="btnDel" class="danger" title="Delete (Del)">Delete</button></div>`;
+  if (o.type !== "body") html += `<div class="grid2">${f("count")}${f("mass", MASS_LABEL[o.type])}</div>`;
+  else html += `<div class="grid2">${f("mass", MASS_LABEL.body)}<div></div></div>`;
+  html += `<div class="grid3" style="margin-top:6px">${f("x")}${f("y")}${f("z")}${f("vx")}${f("vy")}${f("vz")}</div>`;
+  if (o.type === "galaxy") {
+    html += `<div class="grid2" style="margin-top:6px">${f("radius", RADIUS_LABEL.galaxy)}${f("inner")}${f("disk_mass")}${f("tilt")}
+      <label class="field" style="grid-column: span 2"><span>Spin</span><select data-key="spin">
+        <option value="1" ${o.spin >= 0 ? "selected" : ""}>↺ counter-clockwise</option>
+        <option value="-1" ${o.spin < 0 ? "selected" : ""}>↻ clockwise</option></select></label></div>`;
+  } else if (o.type === "cluster") {
+    html += `<div class="grid2" style="margin-top:6px">${f("radius", RADIUS_LABEL.cluster)}</div>`;
+  }
+  box.innerHTML = html;
+  box.querySelectorAll("[data-key]").forEach((el) => {
+    el.addEventListener("input", () => {
+      const v = parseFloat(el.value);
+      if (!isFinite(v)) return;
+      const key = el.dataset.key;
+      o[key] = key === "count" ? Math.max(2, Math.trunc(v)) : v;
+      onModelChanged({ keepPropsFocus: true });
+    });
+  });
+  $("btnDel").onclick = deleteSelected;
+  $("btnDup").onclick = () => {
+    const copy = { ...o, x: round(o.x + 1, 0.05), y: round(o.y - 1, 0.05) };
+    scenario.objects.push(copy);
+    selected = scenario.objects.length - 1;
+    onModelChanged();
+  };
+}
+
+// Update the numbers in the panel without rebuilding it (keeps the cursor in an input).
+function refreshPropValues() {
+  if (selected < 0) return;
+  const o = scenario.objects[selected];
+  $("props").querySelectorAll("input[data-key]").forEach((el) => {
+    if (document.activeElement !== el) el.value = fmt(o[el.dataset.key]);
+  });
+}
+
+function deleteSelected() {
+  if (selected < 0) return;
+  scenario.objects.splice(selected, 1);
+  selected = -1;
+  onModelChanged();
+}
+
+// ---- Settings ----------------------------------------------------------------
+const SETTING_INPUTS = { setSteps: "steps", setDt: "dt", setSave: "save_every", setView: "view" };
+for (const [id, key] of Object.entries(SETTING_INPUTS)) {
+  $(id).addEventListener("input", () => {
+    const v = parseFloat($(id).value);
+    if (!isFinite(v) || v <= 0) return;
+    scenario.settings[key] = (key === "steps" || key === "save_every") ? Math.trunc(v) : v;
+    onModelChanged({ keepPropsFocus: true });
+  });
+}
+function refreshSettings() {
+  for (const [id, key] of Object.entries(SETTING_INPUTS)) {
+    if (document.activeElement !== $(id)) $(id).value = fmt(scenario.settings[key]);
+  }
+}
+
+function refreshStats() {
+  const s = scenario.settings, n = totalBodies(scenario);
+  const frames = Math.floor(s.steps / Math.max(1, s.save_every));
+  const mb = n * frames * 12 / 1e6;
+  // From benchmark.bat on an RTX 5070 Laptop: ~0.6 ms per step at 16K bodies, grows with N².
+  const sec = s.steps * Math.max(0.03, 0.602 * (n / 16384) ** 2) / 1000;
+  const warn = [];
+  if (n > 131072) warn.push("More than 131,072 bodies: the studio will refuse to run it.");
+  else if (n > 65536) warn.push("Many bodies: this will take a while.");
+  if (mb > 1500) warn.push("The result file would be very large: raise “save every”.");
+  $("stats").innerHTML =
+    `<b>${n.toLocaleString()}</b> bodies · <b>${frames}</b> frames · about <b>${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB</b><br>` +
+    `Simulated time <b>${fmt(s.steps * s.dt)}</b> · GPU time roughly <b>${sec < 1 ? "<1" : sec.toFixed(0)} s</b>` +
+    warn.map((w) => `<br><span class="warn">⚠ ${w}</span>`).join("");
+}
+
+// ---- Two-way sync between the map and the text --------------------------------
+function onModelChanged(opts = {}) {
+  $("scenarioText").value = scenarioToText(scenario);
+  setTextErrors([]);
+  if (opts.keepPropsFocus) refreshPropValues(); else renderProps();
+  refreshSettings();
+  refreshStats();
+  drawBuild();
+  updateHeaderForBuild();
+}
+
+let textTimer = null;
+$("scenarioText").addEventListener("input", () => {
+  clearTimeout(textTimer);
+  textTimer = setTimeout(() => {
+    const { sc, errors } = parseScenario($("scenarioText").value);
+    setTextErrors(errors);
+    if (errors.length) return;   // keep the last good version on the map
+    scenario = sc;
+    if (selected >= scenario.objects.length) selected = -1;
+    renderProps(); refreshSettings(); refreshStats(); drawBuild(); updateHeaderForBuild();
+  }, 250);
+});
+function setTextErrors(errors) {
+  textHasErrors = errors.length > 0;
+  $("scenarioText").classList.toggle("invalid", textHasErrors);
+  $("textErrors").textContent = errors.slice(0, 6).join("\n");
+}
+
+function loadScenarioText(text, name) {
+  const { sc, errors } = parseScenario(text);
+  $("scenarioText").value = text;
+  setTextErrors(errors);
+  if (!errors.length) scenario = sc;
+  if (name) $("scenName").value = name;
+  selected = -1;
+  bcam.zoom = 1; bcam.panX = 0; bcam.panY = 0;
+  renderProps(); refreshSettings(); refreshStats(); drawBuild(); updateHeaderForBuild();
+}
+
+$("btnClear").onclick = () => {
+  if (scenario.objects.length && !confirm("Remove all objects?")) return;
+  scenario.objects = []; selected = -1; onModelChanged();
+};
+
+function updateHeaderForBuild() {
+  if (mode !== "build") return;
+  const nb = totalBodies(scenario);
+  $("info").textContent = `${scenario.objects.length} object${scenario.objects.length === 1 ? "" : "s"} · ${nb.toLocaleString()} ${nb === 1 ? "body" : "bodies"}`;
+  $("legend").innerHTML = "";
+}
+
+// ---- Server: examples, save, run ------------------------------------------------
+let server = false;
+
+async function checkServer() {
+  if (!location.protocol.startsWith("http")) return noServer();
+  try {
+    const r = await fetch("/api/status");
+    const st = await r.json();
+    server = !!st.ok;
+    if (!st.nbody) { $("serverNote").hidden = false; $("serverNote").innerHTML = "nbody.exe was not found next to the studio. Start it with <code>start_studio.bat</code> so it gets compiled."; }
+    const ex = await (await fetch("/api/scenarios")).json();
+    const sel = $("examples");
+    for (const s of ex.scenarios) {
+      const opt = document.createElement("option");
+      opt.value = s.name; opt.textContent = s.name; opt.dataset.text = s.text;
+      sel.appendChild(opt);
+    }
+  } catch (e) { noServer(); }
+}
+function noServer() {
+  server = false;
+  $("btnRun").disabled = true;
+  $("btnRun").title = "Start start_studio.bat to run simulations from here";
+  $("serverNote").hidden = false;
+  $("serverNote").innerHTML = "This page was opened as a plain file, so it can't start simulations. " +
+    "Double-click <code>start_studio.bat</code> to open the full studio. Here you can still design a scenario and save it.";
+  $("examples").disabled = true;
+  $("examples").title = "Available when the studio is started with start_studio.bat";
+}
+
+$("examples").onchange = (e) => {
+  const opt = e.target.selectedOptions[0];
+  if (opt && opt.dataset.text) loadScenarioText(opt.dataset.text, opt.value);
+  e.target.value = "";
+};
+
+$("btnSave").onclick = async () => {
+  const name = $("scenName").value.trim() || "my_scenario";
+  const text = $("scenarioText").value;
+  if (server) {
+    const r = await fetch("/api/save", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, text }) });
+    const res = await r.json();
+    setStatus(res.ok ? `Saved to ${res.path}` : "Could not save.", res.ok ? "ok" : "err");
+  } else {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
+    a.download = name.replace(/[^\w\-]+/g, "_") + ".txt";
+    a.click();
+    URL.revokeObjectURL(a.href);
+    setStatus("Downloaded. Put it in the scenarios folder to use it with simulate.bat.", "ok");
+  }
+};
+
+function setStatus(html, cls = "") {
+  $("runStatus").className = cls;
+  $("runStatus").innerHTML = html;
+}
+
+$("btnRun").onclick = async () => {
+  if (!server) return;
+  if (textHasErrors) { setStatus("Fix the errors in the scenario text first.", "err"); return; }
+  if (!scenario.objects.length) { setStatus("Add at least one object first.", "err"); return; }
+  const name = $("scenName").value.trim() || "my_scenario";
+  $("btnRun").disabled = true;
+  setStatus(`<span class="spinner"></span>Simulating ${totalBodies(scenario).toLocaleString()} bodies on the GPU…`);
+  $("logBox").hidden = true;
+  try {
+    const r = await fetch("/api/simulate", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, text: $("scenarioText").value }) });
+    const res = await r.json();
+    if (res.log) { $("runLog").textContent = res.log; $("logBox").hidden = false; }
+    if (!res.ok) { setStatus(res.error || "The simulation failed.", "err"); return; }
+    setStatus(`<span class="spinner"></span>Loading the result…`);
+    const buf = await (await fetch(res.frames)).arrayBuffer();
+    sim = parseFrames(buf, name);
+    setStatus("Done. Playing in the Watch tab.", "ok");
+    onLoaded();
+    setMode("watch");
+  } catch (e) {
+    setStatus("Could not reach the studio server. Is the start_studio window still open?", "err");
+  } finally {
+    $("btnRun").disabled = false;
+  }
+};
+
+// ===========================================================================
+// WATCH VIEW (player)
+// ===========================================================================
+const BASE_FPS = 30;          // at 1× speed, 30 saved frames are shown per second
+let sim = null;
+let t = 0;
 let playing = false;
 let speed = 1;
 let loop = true;
@@ -140,16 +873,12 @@ let trails = false;
 let mode3d = false;
 let lastTick = 0;
 const cam = { yaw: 0, pitch: 0, zoom: 1, panX: 0, panY: 0 };
+const wcv = $("watchCanvas"), ctx = wcv.getContext("2d");
 
-const $ = (id) => document.getElementById(id);
-const canvas = $("canvas");
-const ctx = canvas.getContext("2d");
-
-// ---------------------------------------------------------------------------
-// Loading a .frames file (format written by nbody.cu)
-// ---------------------------------------------------------------------------
+// .frames file format: see nbody.cu
 function parseFrames(buffer, name) {
   const dv = new DataView(buffer);
+  if (buffer.byteLength < 28) throw new Error("This file is too small to be a .frames file.");
   const magic = String.fromCharCode(dv.getUint8(0), dv.getUint8(1), dv.getUint8(2), dv.getUint8(3));
   if (magic !== "NBF2") throw new Error("This is not a .frames file made by nbody.exe (or it was made by an older version).");
   let off = 4;
@@ -160,29 +889,17 @@ function parseFrames(buffer, name) {
   const frameTime = dv.getFloat32(off, true); off += 4;
   const types = new Int32Array(buffer.slice(off, off + 4 * numObjects)); off += 4 * numObjects;
   const group = new Int32Array(buffer.slice(off, off + 4 * n)); off += 4 * n;
-
   const floatsPerFrame = 3 * n;
   const available = Math.floor((buffer.byteLength - off) / (4 * floatsPerFrame));
   const frames = Math.min(framesInHeader, available);
   if (n <= 0 || frames <= 0) throw new Error("The file contains no frames.");
   const pos = new Float32Array(buffer, off, frames * floatsPerFrame);
-
-  // Per-body colour and whether it is a heavy single body.
-  const color = new Array(n);
-  const isBody = new Uint8Array(n);
-  for (let i = 0; i < n; i++) {
-    const g = group[i];
-    isBody[i] = types[g] === BODY ? 1 : 0;
-    const c = PALETTE[g % PALETTE.length];
-    color[i] = `rgb(${c[0]},${c[1]},${c[2]})`;
-  }
-  // Group bodies by colour so we change fillStyle only once per object.
   const byGroup = [];
   for (let g = 0; g < numObjects; g++) byGroup.push([]);
-  for (let i = 0; i < n; i++) if (!isBody[i]) byGroup[group[i]].push(i);
   const heavy = [];
-  for (let i = 0; i < n; i++) if (isBody[i]) heavy.push(i);
-
+  for (let i = 0; i < n; i++) {
+    if (types[group[i]] === BODY) heavy.push(i); else byGroup[group[i]].push(i);
+  }
   return { name, n, frames, numObjects, view, frameTime, types, group, pos,
            byGroup: byGroup.map((a) => Int32Array.from(a)), heavy };
 }
@@ -190,12 +907,8 @@ function parseFrames(buffer, name) {
 function loadFile(file) {
   const reader = new FileReader();
   reader.onload = () => {
-    try {
-      sim = parseFrames(reader.result, file.name);
-      onLoaded();
-    } catch (e) {
-      showError(e.message);
-    }
+    try { sim = parseFrames(reader.result, file.name); onLoaded(); setMode("watch"); }
+    catch (e) { showError(e.message); }
   };
   reader.onerror = () => showError("Could not read the file.");
   reader.readAsArrayBuffer(file);
@@ -208,54 +921,50 @@ function onLoaded() {
   resetCamera();
   for (const id of ["btnStart", "btnBack", "btnPlay", "btnFwd", "btnEnd", "timeline"]) $(id).disabled = false;
   $("timeline").max = sim.frames - 1;
-  const counts = sim.byGroup.map((a) => a.length);
-  sim.heavy.forEach((i) => counts[sim.group[i]]++);
+  playing = true;
+  $("btnPlay").textContent = "⏸ Pause";
+  lastTick = performance.now();
+  updateHeaderForWatch();
+  drawWatch(true);
+}
+
+function updateHeaderForWatch() {
+  if (mode !== "watch") return;
+  if (!sim) { $("info").textContent = "No simulation loaded"; $("legend").innerHTML = ""; return; }
   $("info").textContent = `${sim.name} · ${sim.n.toLocaleString()} bodies · ${sim.frames} frames`;
   $("legend").innerHTML = "";
   for (let g = 0; g < sim.numObjects; g++) {
-    const c = sim.types[g] === BODY ? [255, 255, 255] : PALETTE[g % PALETTE.length];
+    const isBody = sim.types[g] === BODY;
+    const c = isBody ? [255, 255, 255] : PALETTE[g % PALETTE.length];
+    const count = isBody ? 1 : sim.byGroup[g].length;
     const chip = document.createElement("span");
     chip.className = "chip";
-    chip.innerHTML = `<span class="dot" style="background:rgb(${c})"></span>${TYPE_NAMES[sim.types[g]] || "object"} ${g + 1}` +
-      (sim.types[g] === BODY ? "" : ` (${counts[g].toLocaleString()})`);
+    chip.innerHTML = `<span class="dot" style="background:${rgb(c)}"></span>${TYPE_NAMES[sim.types[g]] || "object"} ${g + 1}` +
+      (isBody ? "" : ` (${count.toLocaleString()})`);
     $("legend").appendChild(chip);
   }
-  setPlaying(true);
-  draw(true);
 }
 
-// ---------------------------------------------------------------------------
-// Camera and drawing
-// ---------------------------------------------------------------------------
 function resetCamera() {
   cam.zoom = 1; cam.panX = 0; cam.panY = 0;
   cam.yaw = mode3d ? 0.6 : 0;
   cam.pitch = mode3d ? -0.9 : 0;
 }
 
-function resize() {
-  const dpr = window.devicePixelRatio || 1;
-  const r = canvas.getBoundingClientRect();
-  canvas.width = Math.max(1, Math.round(r.width * dpr));
-  canvas.height = Math.max(1, Math.round(r.height * dpr));
-  draw(true);
+function resizeCanvas(cv) {
+  const r = cv.getBoundingClientRect();
+  if (!r.width || !r.height) return;
+  cv.width = Math.max(1, Math.round(r.width * dpr()));
+  cv.height = Math.max(1, Math.round(r.height * dpr()));
+}
+function resizeAll() {
+  if (mode === "build") { resizeCanvas(bcv); drawBuild(); }
+  else { resizeCanvas(wcv); drawWatch(true); }
 }
 
-// Position of body i at fractional frame t (linear interpolation = smooth slow motion).
-function framePair(tt) {
-  const f0 = Math.max(0, Math.min(sim.frames - 1, Math.floor(tt)));
-  const f1 = Math.min(sim.frames - 1, f0 + 1);
-  return [f0 * 3 * sim.n, f1 * 3 * sim.n, tt - f0];
-}
-
-function draw(clear) {
-  const W = canvas.width, H = canvas.height;
-  if (!sim) {
-    ctx.fillStyle = "#05060a";
-    ctx.fillRect(0, 0, W, H);
-    return;
-  }
-  // Background: full clear, or a translucent fill that leaves fading trails.
+function drawWatch(clear) {
+  const W = wcv.width, H = wcv.height;
+  if (!sim) { ctx.fillStyle = "#05060a"; ctx.fillRect(0, 0, W, H); return; }
   ctx.globalCompositeOperation = "source-over";
   ctx.fillStyle = (trails && !clear) ? "rgba(5,6,10,0.18)" : "#05060a";
   ctx.fillRect(0, 0, W, H);
@@ -264,12 +973,13 @@ function draw(clear) {
   const cx = W / 2 + cam.panX * scale, cy = H / 2 + cam.panY * scale;
   const cyaw = Math.cos(cam.yaw), syaw = Math.sin(cam.yaw);
   const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
-  const [o0, o1, a] = framePair(t);
+  const f0 = Math.max(0, Math.min(sim.frames - 1, Math.floor(t)));
+  const f1 = Math.min(sim.frames - 1, f0 + 1);
+  const o0 = f0 * 3 * sim.n, o1 = f1 * 3 * sim.n, a = t - f0;
   const P = sim.pos;
-  const dpr = window.devicePixelRatio || 1;
-  const dot = Math.max(1, Math.min(3, 9000 / sim.n)) * dpr * Math.sqrt(cam.zoom) * 0.9;
+  const dot = Math.max(1, Math.min(3, 9000 / sim.n)) * dpr() * Math.sqrt(cam.zoom) * 0.9;
 
-  // Rotate (yaw around z, then pitch around x) and project orthographically.
+  // Interpolate between saved frames (smooth slow motion), rotate, project.
   function project(i, out) {
     const k0 = o0 + 3 * i, k1 = o1 + 3 * i;
     const x = P[k0] + (P[k1] - P[k0]) * a;
@@ -283,73 +993,63 @@ function draw(clear) {
   }
 
   const p = [0, 0];
-  ctx.globalCompositeOperation = "lighter";   // overlapping stars glow brighter
+  ctx.globalCompositeOperation = "lighter";
   ctx.globalAlpha = 0.75;
   for (let g = 0; g < sim.numObjects; g++) {
     const idx = sim.byGroup[g];
     if (!idx.length) continue;
-    const c = PALETTE[g % PALETTE.length];
-    ctx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
+    ctx.fillStyle = rgb(PALETTE[g % PALETTE.length]);
     for (let j = 0; j < idx.length; j++) {
       project(idx[j], p);
       if (p[0] < -4 || p[1] < -4 || p[0] > W + 4 || p[1] > H + 4) continue;
       ctx.fillRect(p[0] - dot / 2, p[1] - dot / 2, dot, dot);
     }
   }
-
-  // Heavy bodies: white core with a soft glow.
   ctx.globalAlpha = 1;
   for (const i of sim.heavy) {
     project(i, p);
-    const r = 14 * dpr;
+    const r = 14 * dpr();
     const grad = ctx.createRadialGradient(p[0], p[1], 0, p[0], p[1], r);
     grad.addColorStop(0, "rgba(255,255,255,1)");
     grad.addColorStop(0.25, "rgba(255,255,255,0.9)");
     grad.addColorStop(1, "rgba(255,255,255,0)");
     ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.arc(p[0], p[1], r, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.beginPath(); ctx.arc(p[0], p[1], r, 0, Math.PI * 2); ctx.fill();
   }
   ctx.globalCompositeOperation = "source-over";
   updateTimeUI();
 }
 
-// ---------------------------------------------------------------------------
-// Playback
-// ---------------------------------------------------------------------------
 function setPlaying(on) {
   if (!sim) return;
   playing = on;
   $("btnPlay").textContent = on ? "⏸ Pause" : "▶ Play";
   lastTick = performance.now();
 }
-
-function seek(frame, clear = true) {
+function seek(frame) {
   if (!sim) return;
   t = Math.max(0, Math.min(sim.frames - 1, frame));
-  draw(clear);
+  drawWatch(true);
 }
-
 function step(dir) {
   setPlaying(false);
   seek(dir > 0 ? Math.floor(t) + 1 : Math.ceil(t) - 1);
 }
 
 function tick(now) {
-  if (sim && playing) {
+  if (sim && playing && mode === "watch") {
     const dtSec = Math.min(0.1, (now - lastTick) / 1000);
     lastTick = now;
     let next = t + dtSec * BASE_FPS * speed;
     const last = sim.frames - 1;
     if (next > last) {
       if (loop) next = 0; else { next = last; setPlaying(false); }
-      t = next; draw(true);
+      t = next; drawWatch(true);
     } else if (next < 0) {
       if (loop) next = last; else { next = 0; setPlaying(false); }
-      t = next; draw(true);
+      t = next; drawWatch(true);
     } else {
-      t = next; draw(false);
+      t = next; drawWatch(false);
     }
   }
   requestAnimationFrame(tick);
@@ -362,12 +1062,8 @@ function updateTimeUI() {
   $("time").textContent = `t = ${simT.toFixed(2)} / ${total.toFixed(2)}   ·   frame ${Math.round(t) + 1}/${sim.frames}`;
 }
 
-// ---------------------------------------------------------------------------
-// UI wiring
-// ---------------------------------------------------------------------------
 $("btnPlay").onclick = () => {
   if (!sim) return;
-  // Pressing play at the very end (or start, in reverse) starts over.
   if (!playing && speed > 0 && t >= sim.frames - 1) t = 0;
   if (!playing && speed < 0 && t <= 0) t = sim.frames - 1;
   setPlaying(!playing);
@@ -377,65 +1073,72 @@ $("btnEnd").onclick = () => { setPlaying(false); seek(sim.frames - 1); };
 $("btnBack").onclick = () => step(-1);
 $("btnFwd").onclick = () => step(1);
 $("timeline").oninput = (e) => { setPlaying(false); seek(parseFloat(e.target.value)); };
+$("timeline").addEventListener("change", (e) => e.target.blur());
 $("speed").onchange = (e) => { speed = parseFloat(e.target.value); e.target.blur(); };
 $("btnLoop").onclick = () => { loop = !loop; $("btnLoop").classList.toggle("on", loop); };
-$("btnTrails").onclick = () => { trails = !trails; $("btnTrails").classList.toggle("on", trails); draw(true); };
-$("btn3d").onclick = () => {
-  mode3d = !mode3d;
-  $("btn3d").classList.toggle("on", mode3d);
-  resetCamera(); draw(true);
-};
-$("btnReset").onclick = () => { resetCamera(); draw(true); };
+$("btnTrails").onclick = () => { trails = !trails; $("btnTrails").classList.toggle("on", trails); drawWatch(true); };
+$("btn3d").onclick = () => { mode3d = !mode3d; $("btn3d").classList.toggle("on", mode3d); resetCamera(); drawWatch(true); };
+$("btnReset").onclick = () => { resetCamera(); drawWatch(true); };
 $("file").onchange = (e) => { if (e.target.files[0]) loadFile(e.target.files[0]); e.target.value = ""; };
 
-// Drag & drop a file anywhere on the page.
 window.addEventListener("dragover", (e) => { e.preventDefault(); $("drop").classList.add("hover"); });
 window.addEventListener("dragleave", () => $("drop").classList.remove("hover"));
 window.addEventListener("drop", (e) => {
   e.preventDefault();
   $("drop").classList.remove("hover");
-  if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+  const f = e.dataTransfer.files[0];
+  if (!f) return;
+  if (f.name.toLowerCase().endsWith(".txt")) {
+    f.text().then((txt) => { loadScenarioText(txt, f.name.replace(/\.txt$/i, "")); setMode("build"); });
+  } else loadFile(f);
 });
 
-// Mouse: drag rotates (3D) or pans (2D / Shift), wheel zooms toward the cursor.
-let drag = null;
-canvas.addEventListener("pointerdown", (e) => {
-  drag = { x: e.clientX, y: e.clientY, pan: e.shiftKey || !mode3d };
-  canvas.setPointerCapture(e.pointerId);
-  canvas.classList.add("dragging");
+let wdrag = null;
+wcv.addEventListener("pointerdown", (e) => {
+  wdrag = { x: e.clientX, y: e.clientY, pan: e.shiftKey || !mode3d };
+  wcv.setPointerCapture(e.pointerId);
+  wcv.classList.add("dragging");
 });
-canvas.addEventListener("pointermove", (e) => {
-  if (!drag || !sim) return;
-  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
-  drag.x = e.clientX; drag.y = e.clientY;
-  if (drag.pan) {
-    const scale = (Math.min(canvas.clientWidth, canvas.clientHeight) / 2) / sim.view * cam.zoom;
+wcv.addEventListener("pointermove", (e) => {
+  if (!wdrag || !sim) return;
+  const dx = e.clientX - wdrag.x, dy = e.clientY - wdrag.y;
+  wdrag.x = e.clientX; wdrag.y = e.clientY;
+  if (wdrag.pan) {
+    const scale = (Math.min(wcv.clientWidth, wcv.clientHeight) / 2) / sim.view * cam.zoom;
     cam.panX += dx / scale; cam.panY += dy / scale;
   } else {
     cam.yaw += dx * 0.008;
     cam.pitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, cam.pitch + dy * 0.008));
   }
-  draw(true);
+  drawWatch(true);
 });
-canvas.addEventListener("pointerup", () => { drag = null; canvas.classList.remove("dragging"); });
-canvas.addEventListener("wheel", (e) => {
+wcv.addEventListener("pointerup", () => { wdrag = null; wcv.classList.remove("dragging"); });
+wcv.addEventListener("wheel", (e) => {
   if (!sim) return;
   e.preventDefault();
   const factor = Math.exp(-e.deltaY * 0.0015);
-  // Keep the point under the cursor fixed while zooming.
-  const r = canvas.getBoundingClientRect();
+  const r = wcv.getBoundingClientRect();
   const scale = (Math.min(r.width, r.height) / 2) / sim.view * cam.zoom;
   const mx = (e.clientX - r.left - r.width / 2) / scale - cam.panX;
   const my = (e.clientY - r.top - r.height / 2) / scale - cam.panY;
   cam.zoom = Math.max(0.1, Math.min(50, cam.zoom * factor));
   cam.panX = -mx + (mx + cam.panX) / factor;
   cam.panY = -my + (my + cam.panY) / factor;
-  draw(true);
+  drawWatch(true);
 }, { passive: false });
 
-// Keyboard shortcuts.
+// ===========================================================================
+// Keyboard and start-up
+// ===========================================================================
 window.addEventListener("keydown", (e) => {
-  if (!sim || e.target.tagName === "SELECT") return;
+  const tag = e.target.tagName;
+  const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+  if (mode === "build") {
+    if (e.key === "Escape") { setPlacing(null); selected = -1; renderProps(); drawBuild(); }
+    if (!typing && (e.key === "Delete" || e.key === "Backspace")) { e.preventDefault(); deleteSelected(); }
+    return;
+  }
+  if (!sim || (typing && tag !== "INPUT") || (tag === "INPUT" && e.target.type !== "range")) return;
   const speeds = Array.from($("speed").options).map((o) => parseFloat(o.value));
   switch (e.key) {
     case " ": e.preventDefault(); $("btnPlay").click(); break;
@@ -443,27 +1146,25 @@ window.addEventListener("keydown", (e) => {
     case "ArrowRight": e.preventDefault(); step(1); break;
     case "Home": setPlaying(false); seek(0); break;
     case "End": setPlaying(false); seek(sim.frames - 1); break;
-    case "+": case "=": {
-      const i = Math.min(speeds.length - 1, speeds.indexOf(speed) + 1);
-      speed = speeds[i]; $("speed").value = String(speed); break;
-    }
-    case "-": {
-      const i = Math.max(0, speeds.indexOf(speed) - 1);
-      speed = speeds[i]; $("speed").value = String(speed); break;
-    }
+    case "+": case "=": { speed = speeds[Math.min(speeds.length - 1, speeds.indexOf(speed) + 1)]; $("speed").value = String(speed); break; }
+    case "-": { speed = speeds[Math.max(0, speeds.indexOf(speed) - 1)]; $("speed").value = String(speed); break; }
   }
 });
-
-// Don't leave focus on a button or the slider, so Space and the arrow keys
-// always go to the shortcuts instead of re-pressing the last button.
 document.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => b.blur()));
-$("timeline").addEventListener("change", (e) => e.target.blur());
+window.addEventListener("resize", resizeAll);
 
-function showError(msg) { const el = $("error"); el.textContent = msg; el.style.display = "block"; }
-function hideError() { $("error").style.display = "none"; }
+// Start with the classic two-galaxy collision so there is something to play with.
+loadScenarioText(`# Two spiral galaxies on an off-centre collision course.
+steps = 1500
+dt = 0.01
+save_every = 6
+view = 5
 
-window.addEventListener("resize", resize);
-resize();
+galaxy  count=4096  x=-3  y=-1  vx=0.3   spin=1
+galaxy  count=4096  x=3   y=1   vx=-0.3  spin=-1
+`, "my_scenario");
+setMode("build");
+checkServer();
 requestAnimationFrame(tick);
 </script>
 </body>
