@@ -1,0 +1,10 @@
+# Build outputs
+*.exe
+*.exp
+*.lib
+*.obj
+*.pdb
+
+# Generated data and logs
+frames.bin
+run_log.txt
