@@ -8,3 +8,4 @@
 # Generated data and logs
 frames.bin
 run_log.txt
+output/

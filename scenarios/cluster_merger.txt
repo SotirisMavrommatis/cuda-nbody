@@ -1,0 +1,9 @@
+# Two star clusters fall into each other and merge into one bigger cluster.
+
+steps = 1500
+dt = 0.01
+save_every = 6
+view = 4
+
+cluster  count=4096  x=-2 y=-0.5  vx=0.2   mass=1 radius=0.3
+cluster  count=4096  x=2  y=0.5   vx=-0.2  mass=1 radius=0.3

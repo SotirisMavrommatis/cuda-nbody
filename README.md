@@ -21,6 +21,32 @@ The program checks itself before it benchmarks anything. It runs the same simula
 the CPU and on both GPU kernels and compares the positions. Both kernels match the CPU
 to within `2.4e-07`.
 
+## Make your own collisions
+
+What collides with what is not hard-coded. Each simulation is described by a small text
+file in [`scenarios/`](scenarios/). You can mix **galaxies**, **star clusters** and single
+**heavy bodies** (such as black holes), and set their positions, velocities, masses, spin
+and tilt:
+
+```text
+steps = 1500
+view = 5
+
+galaxy   count=6144  x=-2.5 y=-0.8  vx=0.25  spin=1
+cluster  count=2048  x=3    y=1     vx=-0.45 mass=0.6 radius=0.25
+```
+
+On Windows, **drag a scenario file onto `simulate.bat`** and the GIF appears in `output/`.
+The full list of settings is in [`scenarios/README.md`](scenarios/README.md).
+
+| Galaxy vs. star cluster | Two clusters merging | Tilted galaxies (3D) |
+|:---:|:---:|:---:|
+| ![](docs/galaxy_vs_cluster.png) | ![](docs/cluster_merger.png) | ![](docs/tilted_galaxies.png) |
+| `galaxy_vs_cluster.txt` | `cluster_merger.txt` | `tilted_galaxies.txt` |
+
+There is also `black_hole_flyby.txt`, in which a black hole twice as heavy as the galaxy's
+centre flies past and tears out long tidal arms.
+
 ## Results
 
 NVIDIA GeForce RTX 5070 Laptop GPU (36 SMs), CUDA 13.5, Windows 11. Times are per
@@ -48,9 +74,11 @@ simulation step.
 
 - Units with `G = 1`. Softening `ε² = 0.0025` keeps forces finite when two bodies get very
   close.
-- Semi-implicit (symplectic) Euler integration, `dt = 0.01`.
-- Each galaxy is one heavy central mass plus a thin disk of stars on circular orbits. The
-  two galaxies spin in opposite directions and approach on an off-centre path.
+- Semi-implicit (symplectic) Euler integration. The default is `dt = 0.01`, and each
+  scenario can set its own.
+- **Galaxy:** one heavy central mass plus a thin disk of stars on circular orbits.
+- **Star cluster:** a [Plummer sphere](https://en.wikipedia.org/wiki/Plummer_model) whose
+  velocities are sampled so that it starts in equilibrium (virial ratio 2K/|W| ≈ 1).
 
 ## Build and run
 
@@ -58,27 +86,34 @@ Requirements: an NVIDIA GPU, the [CUDA Toolkit](https://developer.nvidia.com/cud
 and, on Windows, Visual Studio with the *Desktop development with C++* workload.
 Rendering the GIF needs Python with `numpy`, `matplotlib` and `pillow`.
 
-**Windows (easy way):** double-click `build_and_run.bat`. It compiles, verifies,
-benchmarks, simulates and renders the GIF, and saves all output to `run_log.txt`.
+**Windows (easy way):**
+- `simulate.bat`: drag a scenario `.txt` onto it, or double-click it to run `scenarios/galaxies.txt`
+- `run_all.bat`: runs every scenario and makes a GIF for each
+- `benchmark.bat`: CPU vs GPU verification plus the benchmark table above
+
+Everything is written to the `output/` folder, including a log file for each run.
 
 **By hand:**
 ```bash
 nvcc -O3 -o nbody nbody.cu
-./nbody                                   # verify + benchmark + write frames.bin
-python render.py frames.bin galaxy_collision.gif
+./nbody bench                                     # verify + benchmark
+./nbody scenarios/galaxies.txt frames.bin         # run a scenario
+python render.py frames.bin galaxies.gif galaxies # make the GIF
 ```
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `nbody.cu` | Simulation, CUDA kernels, verification and benchmark |
-| `render.py` | Turns `frames.bin` into `galaxy_collision.gif` and a still `.png` |
-| `build_and_run.bat` | One-click build and run on Windows |
+| `nbody.cu` | Simulation, CUDA kernels, scenario loader, verification and benchmark |
+| `render.py` | Turns a `frames.bin` into a GIF and a still `.png`, one colour per object |
+| `scenarios/` | Example scenarios and the format guide |
+| `simulate.bat`, `run_all.bat`, `benchmark.bat` | One-click scripts for Windows (`_build.bat` is a shared helper) |
 
 ## Ideas for next steps
 
 - Real-time OpenGL rendering through CUDA–OpenGL interop, instead of writing frames to disk
 - Leapfrog or Runge-Kutta integration, plus an energy-conservation check
+- Real-time camera controls and a 3D view (the tilted scenarios are 3D, the GIF shows x–y)
 - Barnes–Hut tree, O(N log N), for millions of bodies
 - Multithreaded CPU baseline (OpenMP) for a fairer comparison

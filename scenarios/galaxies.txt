@@ -1,0 +1,9 @@
+# Two spiral galaxies, spinning in opposite directions, on an off-centre collision course.
+
+steps = 1500
+dt = 0.01
+save_every = 6
+view = 5
+
+galaxy  count=4096  x=-3 y=-1  vx=0.3   spin=1
+galaxy  count=4096  x=3  y=1   vx=-0.3  spin=-1

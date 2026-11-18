@@ -1,0 +1,9 @@
+# A dense ball of stars (a globular cluster) smashes through a spiral galaxy.
+
+steps = 1500
+dt = 0.01
+save_every = 6
+view = 5
+
+galaxy   count=6144  x=-2.5 y=-0.8  vx=0.25  spin=1
+cluster  count=2048  x=3    y=1     vx=-0.45 mass=0.6 radius=0.25

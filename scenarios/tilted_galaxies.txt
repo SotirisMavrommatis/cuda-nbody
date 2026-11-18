@@ -1,0 +1,10 @@
+# Like galaxies.txt, but the second galaxy is tilted 60 degrees: a real 3D collision.
+# (We look at it from above, so the tilted disk appears squashed.)
+
+steps = 1500
+dt = 0.01
+save_every = 6
+view = 5
+
+galaxy  count=4096  x=-3 y=-1  vx=0.3   spin=1
+galaxy  count=4096  x=3  y=1   vx=-0.3  spin=-1  tilt=60

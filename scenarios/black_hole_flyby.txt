@@ -1,0 +1,9 @@
+# A heavy black hole flies past a spiral galaxy and rips out long tidal arms.
+
+steps = 1500
+dt = 0.01
+save_every = 6
+view = 7
+
+galaxy  count=8191  x=0  y=0   spin=1
+body    x=-5  y=2.5  vx=0.7  mass=2
